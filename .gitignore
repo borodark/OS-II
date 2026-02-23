@@ -1,0 +1,28 @@
+# Build outputs
+build/
+_build/
+cmake-build-*/
+out/
+
+# Zephyr / west local artifacts
+.west/
+zephyr/
+*.elf
+*.bin
+*.hex
+
+# Local logs and captures
+logs/
+*.log
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Python / virtualenv
+.venv/
+venv/
+__pycache__/
+*.pyc

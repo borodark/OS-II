@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="860" viewBox="0 0 1200 860">
+  <style>
+    .title { font: 700 30px sans-serif; fill: #0f172a; }
+    .label { font: 600 20px sans-serif; fill: #0f172a; }
+    .text { font: 500 16px sans-serif; fill: #1f2937; }
+    .box { fill: #f8fafc; stroke: #334155; stroke-width: 2; rx: 10; ry: 10; }
+    .accent { fill: #e2e8f0; stroke: #334155; stroke-width: 2; rx: 10; ry: 10; }
+    .arrow { stroke: #0f172a; stroke-width: 2.5; marker-end: url(#arrow); }
+    .event { stroke: #0f766e; stroke-width: 2.5; marker-end: url(#arrow2); stroke-dasharray: 8 6; }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#0f172a"/>
+    </marker>
+    <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+
+  <text x="40" y="50" class="title">OS/II Architecture (Rendered)</text>
+
+  <rect x="170" y="90" width="860" height="85" class="box"/>
+  <text x="600" y="125" text-anchor="middle" class="label">Application Bytecode Modules</text>
+  <text x="600" y="150" text-anchor="middle" class="text">OS/II restricted BEAM subset (static images)</text>
+
+  <rect x="170" y="215" width="860" height="120" class="box"/>
+  <text x="600" y="250" text-anchor="middle" class="label">VM Process Model + VM Core Interpreter</text>
+  <text x="600" y="276" text-anchor="middle" class="text">Mailbox-driven orchestration, register VM, bounded runtime state</text>
+  <text x="600" y="302" text-anchor="middle" class="text">Policy, retries, mode transitions, command sequencing</text>
+
+  <rect x="170" y="375" width="860" height="85" class="accent"/>
+  <text x="600" y="410" text-anchor="middle" class="label">HAL / BIF Bridge</text>
+  <text x="600" y="435" text-anchor="middle" class="text">Typed command ABI, argument validation, native dispatch</text>
+
+  <rect x="170" y="500" width="860" height="95" class="box"/>
+  <text x="600" y="535" text-anchor="middle" class="label">Native Driver Plane (Zephyr + nrfx)</text>
+  <text x="600" y="560" text-anchor="middle" class="text">ISR, DMA/EasyDMA, timing-sensitive peripheral control</text>
+  <text x="600" y="584" text-anchor="middle" class="text">Deterministic device-facing execution paths</text>
+
+  <rect x="170" y="635" width="860" height="95" class="box"/>
+  <text x="600" y="670" text-anchor="middle" class="label">nRF52840 Hardware</text>
+  <text x="600" y="695" text-anchor="middle" class="text">GPIO, PWM, I2C, ADC, UART, SPI, RTC, PDM</text>
+  <text x="600" y="719" text-anchor="middle" class="text">Board examples: Arduino Nano 33 BLE / BLE Sense</text>
+
+  <line x1="600" y1="175" x2="600" y2="215" class="arrow"/>
+  <line x1="600" y1="335" x2="600" y2="375" class="arrow"/>
+  <line x1="600" y1="460" x2="600" y2="500" class="arrow"/>
+  <line x1="600" y1="595" x2="600" y2="635" class="arrow"/>
+
+  <rect x="40" y="280" width="95" height="80" class="accent"/>
+  <text x="88" y="313" text-anchor="middle" class="text">Sensor</text>
+  <text x="88" y="335" text-anchor="middle" class="text">events</text>
+  <line x1="135" y1="320" x2="170" y2="320" class="event"/>
+
+  <line x1="1030" y1="560" x2="1080" y2="560" class="event"/>
+  <line x1="1080" y1="560" x2="1080" y2="275" class="event"/>
+  <line x1="1080" y1="275" x2="1030" y2="275" class="event"/>
+  <text x="1092" y="425" transform="rotate(90 1092 425)" class="text">Event path to VM mailbox</text>
+
+  <rect x="40" y="765" width="1120" height="60" class="box"/>
+  <text x="600" y="792" text-anchor="middle" class="text">
+    VM domain owns orchestration and policy. Native domain owns hard timing and peripheral execution.
+  </text>
+  <text x="600" y="813" text-anchor="middle" class="text">
+    Boundary is explicit through mailbox command/event contracts.
+  </text>
+</svg>

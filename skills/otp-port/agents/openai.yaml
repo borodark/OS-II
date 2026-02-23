@@ -1,0 +1,4 @@
+interface:
+  display_name: "OTP Port"
+  short_description: "Map ERTS/BEAM internals for embedded target ports"
+  default_prompt: "Use $otp-port to analyze ERTS/BEAM sources and build an ESP32 porting plan."

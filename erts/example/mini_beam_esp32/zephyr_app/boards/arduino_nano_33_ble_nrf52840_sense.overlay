@@ -1,0 +1,27 @@
+/ {
+    aliases {
+        /* For Sense target, route logical i2c0 to onboard-sensor bus i2c1. */
+        i2c0 = &i2c1;
+    };
+
+    chosen {
+        zephyr,console = &cdc_acm_uart0;
+        zephyr,shell-uart = &cdc_acm_uart0;
+        zephyr,uart-mcumgr = &cdc_acm_uart0;
+    };
+};
+
+&zephyr_udc0 {
+    cdc_acm_uart0: cdc_acm_uart0 {
+        compatible = "zephyr,cdc-acm-uart";
+    };
+};
+
+&pwm0 {
+    status = "okay";
+};
+
+&i2c1 {
+    status = "okay";
+    clock-frequency = <I2C_BITRATE_FAST>;
+};
