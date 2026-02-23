@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ZEPHYR_WS="${ZEPHYR_WS:-/home/io/zephyrproject}"
-APP_DIR="${APP_DIR:-/home/io/projects/learn_erl/otp/erts/example/mini_beam_esp32/zephyr_app}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="${APP_DIR:-$SCRIPT_DIR}"
 BUILD_DIR="${BUILD_DIR:-/tmp/os2-nano33-sense-build}"
 BOARD="${BOARD:-arduino_nano_33_ble/nrf52840/sense}"
 PORT="${PORT:-/dev/ttyACM0}"
 BOSSAC="${BOSSAC:-$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bossac}"
+ZEPHYR_WS="${ZEPHYR_WS:-${WEST_TOPDIR:-}}"
 
 MONITOR=0
 if [[ "${1:-}" == "--monitor" ]]; then
   MONITOR=1
+fi
+
+if [[ -z "${ZEPHYR_WS}" ]]; then
+  if command -v west >/dev/null 2>&1; then
+    ZEPHYR_WS="$(west topdir 2>/dev/null || true)"
+  fi
+fi
+
+if [[ -z "${ZEPHYR_WS}" ]]; then
+  echo "error: ZEPHYR_WS is not set and no west workspace was detected." >&2
+  echo "set ZEPHYR_WS=/path/to/zephyr-workspace and retry." >&2
+  exit 1
 fi
 
 if [[ ! -x "$BOSSAC" ]]; then
@@ -22,6 +35,11 @@ fi
 if [[ -f "$ZEPHYR_WS/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1090
   source "$ZEPHYR_WS/.venv/bin/activate"
+fi
+
+if ! command -v west >/dev/null 2>&1; then
+  echo "error: west not found in PATH. Activate your Zephyr venv first." >&2
+  exit 1
 fi
 
 cd "$ZEPHYR_WS"

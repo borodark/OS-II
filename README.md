@@ -1,8 +1,8 @@
-# OS/II on Erlang/OTP Source Tree
+# OS/II Runtime Research
 
-Deterministic, BEAM-inspired embedded runtime research on top of the Erlang/OTP source tree.
+Deterministic, BEAM-inspired embedded runtime research for microcontrollers.
 
-This repo contains upstream OTP sources plus an active research prototype:
+This repo contains the active OS/II prototype:
 - `OS/II` mini VM runtime for MCU orchestration
 - Zephyr hardware path for `nRF52840` boards
 - validated bring-up on Arduino Nano 33 BLE Sense sensors
@@ -39,14 +39,30 @@ sensor detected: APDS9960 on bus1
 ## Quickstart (Sense)
 
 Requirements:
-- Zephyr workspace at `/home/io/zephyrproject`
+- Zephyr workspace (any path)
 - Arduino `bossac` installed at `~/.arduino15/.../bossac`
 - board connected on `/dev/ttyACM0`
 
 Run build + flash + monitor:
 ```bash
+export ZEPHYR_WS="$HOME/zephyrproject"
 env CCACHE_DISABLE=1 XDG_CACHE_HOME=/tmp/zephyr-cache \
-  /home/io/projects/learn_erl/otp/erts/example/mini_beam_esp32/zephyr_app/reflash_nano33_sense.sh --monitor
+  ./erts/example/mini_beam_esp32/zephyr_app/reflash_nano33_sense.sh --monitor
+```
+
+## Bootstrap From Fresh Clone
+
+Create a Zephyr workspace + venv and install west dependencies:
+```bash
+./erts/example/mini_beam_esp32/zephyr_app/bootstrap_zephyr_workspace.sh "$HOME/zephyrproject"
+```
+
+Then build/flash:
+```bash
+source "$HOME/zephyrproject/.venv/bin/activate"
+export ZEPHYR_WS="$HOME/zephyrproject"
+export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bossac"
+./erts/example/mini_beam_esp32/zephyr_app/reflash_nano33_sense.sh --monitor
 ```
 
 ## Key Paths
@@ -76,14 +92,13 @@ env CCACHE_DISABLE=1 XDG_CACHE_HOME=/tmp/zephyr-cache \
 - contributor call: `system/doc/CALL_FOR_CONTRIBUTIONS.md`
 - MSc/PhD framing: `system/doc/RESEARCH_PLAN_MSC_PHD.md`
 
-## Upstream OTP Context
+## Repository Split Note
 
-This repository still includes the full Erlang/OTP source tree. For upstream OTP build and contribution workflow, see:
-- `HOWTO/INSTALL.md`
-- `CONTRIBUTING.md`
-- `SECURITY.md`
+This is a standalone OS/II project repository.  
+The original upstream OTP clone was moved to:
+- `../otp_github`
 
 ## License
 
-Erlang/OTP and this work remain under Apache-2.0 terms in this repository:
-- `LICENSE.txt`
+This repository is licensed under Apache-2.0:
+- `LICENSE`

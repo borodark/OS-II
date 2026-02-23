@@ -2,6 +2,19 @@
 
 This app runs the mini VM on nRF52840 using Zephyr/NCS drivers.
 
+## Bootstrap (fresh machine)
+
+```bash
+./bootstrap_zephyr_workspace.sh "$HOME/zephyrproject"
+```
+
+Then:
+
+```bash
+source "$HOME/zephyrproject/.venv/bin/activate"
+export ZEPHYR_WS="$HOME/zephyrproject"
+```
+
 ## Build
 
 Typical board targets:

@@ -29,6 +29,8 @@ Developers can flash, monitor, and debug with short loops and explicit logs: sen
 ## Suggested Repository Positioning
 “A research-grade prototype for deterministic, BEAM-inspired embedded orchestration on MCU hardware.”
 
+Repository scope note: this is a standalone OS/II research repository. The full upstream OTP clone is maintained separately.
+
 ## Suggested Demo Output Snippet
 ```text
 mini_beam_nrf52 start
