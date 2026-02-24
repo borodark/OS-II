@@ -9,6 +9,7 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/task_wdt/task_wdt.h>
 #include <hal/nrf_clock.h>
+#include <hal/nrf_power.h>
 
 #if defined(CONFIG_USB_DEVICE_STACK)
 #include <zephyr/usb/usb_device.h>
@@ -150,6 +151,24 @@ static const os2_sensor_sig_t os2_sensor_sigs[] = {
 };
 
 static uint8_t demo_program[128];
+#define OS2_BOOT_MAGIC_GPR2 0xA5U
+
+static uint16_t os2_boot_counter_next(void) {
+    uint8_t magic = (uint8_t)(NRF_POWER->GPREGRET2 & 0xFFU);
+    uint8_t counter = (uint8_t)(NRF_POWER->GPREGRET & 0xFFU);
+
+    if (magic != OS2_BOOT_MAGIC_GPR2) {
+        NRF_POWER->GPREGRET2 = OS2_BOOT_MAGIC_GPR2;
+        counter = 0U;
+    }
+
+    counter = (uint8_t)(counter + 1U);
+    if (counter == 0U) {
+        counter = 1U;
+    }
+    NRF_POWER->GPREGRET = counter;
+    return counter;
+}
 
 static void os2_emit_u8(size_t *pc, uint8_t value) {
     demo_program[(*pc)++] = value;
@@ -423,6 +442,8 @@ int main(void) {
     os2_sensor_runtime_t runtimes[6] = {0};
     int wdt_channel = -1;
     uint8_t wdt_feed_blocked = 0;
+    uint32_t resetreas_raw = NRF_POWER->RESETREAS;
+    uint16_t boot_counter = 0;
 
 #if defined(CONFIG_USB_DEVICE_STACK)
     {
@@ -444,6 +465,9 @@ int main(void) {
 
     LOG_INF("mini_beam_nrf52 start");
     LOG_INF("event schema v%d", OS2_EVENT_SCHEMA_VERSION);
+    boot_counter = os2_boot_counter_next();
+    LOG_INF("boot counter=%u resetreas=0x%08x", (unsigned)boot_counter, resetreas_raw);
+    NRF_POWER->RESETREAS = resetreas_raw;
 
     wdt_channel = os2_task_wdt_start();
     if (wdt_channel < 0) {

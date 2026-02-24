@@ -61,6 +61,24 @@ Runtime event logs include:
 If a sensor stays degraded past grace window, the task watchdog intentionally
 stops being fed and performs a cold reboot recovery.
 
+Capture full degraded/reboot evidence:
+
+```bash
+./capture_recovery_evidence.sh logs/recovery_evidence.log
+```
+
+Validate an existing log:
+
+```bash
+./check_recovery_log.sh logs/recovery_evidence.log
+```
+
+M5 performance baseline from log data:
+
+```bash
+./analyze_event_perf.sh logs/recovery_evidence.log
+```
+
 Board debug instructions:
 - `README_DEBUG_BOARD.md`
 

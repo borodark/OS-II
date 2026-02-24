@@ -136,8 +136,12 @@ export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bos
 - `M1` GPIO/PWM/I2C orchestration on hardware (done baseline)
 - `M2` sensor event loop + mailbox policy expansion (in progress)
 - `M3` memory model hardening + long-run stability tests
-- `M4` resilience features: watchdog, fault recovery, soak runs
-- `M5` performance characterization + contract freeze
+- `M4` resilience features: watchdog, fault recovery, soak runs (done)
+- `M5` performance characterization + contract freeze (in progress)
+
+M5 starter tooling:
+- `erts/example/mini_beam_esp32/zephyr_app/analyze_event_perf.sh`
+- `system/doc/M5_PERF_BASELINE.md`
 
 ## Repository Split Note
 

@@ -37,6 +37,11 @@ Primary hardware track: nRF52840 (Zephyr/NCS). ESP32 path remains optional.
 - Add watchdog integration, peripheral fault handling, and restart strategy.
 - Exit criteria: fault injection test recovers to known safe state.
 
+6. M5 Performance Characterization
+- Capture event-loop throughput, sensor polling period, and mailbox behavior
+  under nominal and fault-injected load.
+- Exit criteria: documented baseline report and repeatable measurement script.
+
 ## Runtime Boundaries
 
 - Native layer owns hard real-time peripheral interaction.
@@ -56,3 +61,12 @@ Primary hardware track: nRF52840 (Zephyr/NCS). ESP32 path remains optional.
 - Safety margin: 64 KB
 
 Adjust after measurement on target board and toolchain.
+
+## Current Status (2026-02-24)
+
+- `M0`: done
+- `M1`: done
+- `M2`: in progress
+- `M3`: pending
+- `M4`: done (hardware evidence captured in `system/doc/M4_RECOVERY_EVIDENCE.md`)
+- `M5`: in progress (baseline tooling and first measurements started)
