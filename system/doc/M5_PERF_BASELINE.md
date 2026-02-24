@@ -13,9 +13,33 @@ Run:
 cd erts/example/mini_beam_esp32/zephyr_app
 ./analyze_event_perf.sh logs/fault_test.log
 ./analyze_event_perf.sh logs/recovery_evidence.log
+./analyze_event_perf.sh logs/nominal_soak_10m.log --scenario nominal_soak_10m --csv ../../../system/doc/M5_BASELINE_NOMINAL_SOAK.csv
+./analyze_event_perf.sh logs/recovery_evidence.log --scenario recovery_evidence --csv ../../../system/doc/M5_BASELINE_RECOVERY.csv
 ```
 
 ## Baseline Snapshot (2026-02-24)
+
+### 10-minute nominal soak (`logs/nominal_soak_10m.log`)
+
+- `events_total=1775`
+- `duration_ms=800008`
+- `event_rate_hz=2.219`
+- `inj_events=0`
+- `status_0=1775`
+- per-sensor average period:
+  - `sensor_1_avg_ms=1352.73`
+  - `sensor_2_avg_ms=1352.70`
+  - `sensor_3_avg_ms=1015.83`
+- per-sensor period jitter (ms):
+  - `sensor_1 p50/p95/p99 = 1025/1026/1026`
+  - `sensor_2 p50/p95/p99 = 1025/1026/1026`
+  - `sensor_3 p50/p95/p99 = 1006/1026/1026`
+- mailbox correlation:
+  - first stats: `attempted=849 processed=849`
+  - last stats: `attempted=2619 processed=2619`
+  - `mb_processed_over_attempted_pct=100.00`
+  - `mb_drop_over_attempted_pct=0.00`
+  - `mb_delta_attempted=1770`, `mb_delta_processed=1770`
 
 ### Nominal run (`logs/nominal_perf.log`)
 
@@ -61,8 +85,22 @@ cd erts/example/mini_beam_esp32/zephyr_app
   - `mb_drop_over_attempted_pct=0.00`
   - `mb_delta_attempted=9`, `mb_delta_processed=9`
 
+## Regression Gate (CSV)
+
+Use CSV output with a deterministic threshold check:
+
+```bash
+cd erts/example/mini_beam_esp32/zephyr_app
+./check_perf_regression.sh ../../../system/doc/M5_BASELINE_NOMINAL_SOAK.csv \
+  --scenario nominal_soak_10m \
+  --min-event-rate-hz 2.0 \
+  --max-drop-pct 0.10 \
+  --min-processed-pct 99.0 \
+  --max-sensor-p99-ms 1300
+```
+
 ## Next M5 Steps
 
-1. Run a longer nominal soak (>= 10 min) to quantify drift and long-tail jitter.
-2. Add p50/p95/p99 for end-to-end inter-event deltas across all sensors.
-3. Add CSV/JSON output mode for analyzer to feed plotting notebooks.
+1. Add optional JSON output mode next to CSV for notebook ingestion.
+2. Extend checks with global inter-event delta p95/p99 across all sensors.
+3. Wire `check_perf_regression.sh` into CI to fail on threshold violations.

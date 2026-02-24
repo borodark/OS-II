@@ -2,8 +2,29 @@
 set -euo pipefail
 
 LOG_FILE="${1:-}"
+CSV_OUT=""
+SCENARIO="default"
+shift || true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --csv)
+      CSV_OUT="${2:?missing value for --csv}"
+      shift 2
+      ;;
+    --scenario)
+      SCENARIO="${2:?missing value for --scenario}"
+      shift 2
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
 if [[ -z "$LOG_FILE" ]]; then
-  echo "usage: $0 <log-file>" >&2
+  echo "usage: $0 <log-file> [--csv <out.csv>] [--scenario <name>]" >&2
   exit 2
 fi
 
@@ -19,7 +40,15 @@ trap 'rm -f "$TMP_CLEAN" "$TMP_PERIODS"' EXIT
 # Strip ANSI terminal color sequences from captured serial logs.
 sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g' "$LOG_FILE" > "$TMP_CLEAN"
 
-awk -v periods_file="$TMP_PERIODS" '
+declare -A METRICS=()
+
+record_metric() {
+  local key="$1"
+  local value="$2"
+  METRICS["$key"]="$value"
+}
+
+AWK_OUT="$(awk -v periods_file="$TMP_PERIODS" '
   /event sensor_id=/ {
     sid=""; ts=""; st=""; inj="";
     for (i = 1; i <= NF; i++) {
@@ -52,9 +81,9 @@ awk -v periods_file="$TMP_PERIODS" '
     last_ts[sid] = ts;
   }
   END {
-    print "events_total=" total_events;
-    print "ts_min_ms=" ts_min;
-    print "ts_max_ms=" ts_max;
+    print "events_total=" (total_events + 0);
+    print "ts_min_ms=" (ts_min + 0);
+    print "ts_max_ms=" (ts_max + 0);
     if (ts_max > ts_min) {
       duration = ts_max - ts_min;
       print "duration_ms=" duration;
@@ -78,8 +107,24 @@ awk -v periods_file="$TMP_PERIODS" '
         printf("  sensor_%s_avg_ms=%.2f\n", sid, sensor_period_sum[sid] / sensor_period_n[sid]);
       }
     }
-  }
-' "$TMP_CLEAN"
+  }' "$TMP_CLEAN")"
+
+echo "$AWK_OUT"
+while IFS= read -r line; do
+  case "$line" in
+    events_total=*|ts_min_ms=*|ts_max_ms=*|duration_ms=*|event_rate_hz=*|inj_events=*)
+      key="${line%%=*}"
+      val="${line#*=}"
+      record_metric "$key" "$val"
+      ;;
+    "  status_"*|"  sensor_"*_events=*|"  sensor_"*_avg_ms=*)
+      trimmed="${line#"  "}"
+      key="${trimmed%%=*}"
+      val="${trimmed#*=}"
+      record_metric "$key" "$val"
+      ;;
+  esac
+done <<< "$AWK_OUT"
 
 echo "sensor_period_ms_pct:"
 while IFS= read -r sid; do
@@ -101,6 +146,9 @@ while IFS= read -r sid; do
   p95="${periods[$((p95i - 1))]}"
   p99="${periods[$((p99i - 1))]}"
   echo "  sensor_${sid}_p50_ms=${p50} sensor_${sid}_p95_ms=${p95} sensor_${sid}_p99_ms=${p99}"
+  record_metric "sensor_${sid}_p50_ms" "$p50"
+  record_metric "sensor_${sid}_p95_ms" "$p95"
+  record_metric "sensor_${sid}_p99_ms" "$p99"
 done < <(awk '{print $1}' "$TMP_PERIODS" | sort -u)
 
 first_mb="$(rg 'mb_stats attempted=' "$TMP_CLEAN" | head -n 1 || true)"
@@ -128,6 +176,8 @@ if [[ -n "$last_mb" ]]; then
     drop_pct="$(awk -v d="$dropped_full" -v a="$attempted" 'BEGIN { printf "%.2f", (d*100.0)/a }')"
     echo "mb_processed_over_attempted_pct=$util_pct"
     echo "mb_drop_over_attempted_pct=$drop_pct"
+    record_metric "mb_processed_over_attempted_pct" "$util_pct"
+    record_metric "mb_drop_over_attempted_pct" "$drop_pct"
   fi
 fi
 
@@ -141,5 +191,17 @@ if [[ -n "$first_mb" && -n "$last_mb" ]]; then
     delta_p=$((last_processed - first_processed))
     echo "mb_delta_attempted=$delta_a"
     echo "mb_delta_processed=$delta_p"
+    record_metric "mb_delta_attempted" "$delta_a"
+    record_metric "mb_delta_processed" "$delta_p"
   fi
+fi
+
+if [[ -n "$CSV_OUT" ]]; then
+  {
+    echo "scenario,metric,value"
+    for key in "${!METRICS[@]}"; do
+      echo "${SCENARIO},${key},${METRICS[$key]}"
+    done | sort
+  } > "$CSV_OUT"
+  echo "csv_written=$CSV_OUT"
 fi
