@@ -1,0 +1,39 @@
+name: Perf Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  perf-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        run: |
+          bash -n erts/example/mini_beam_esp32/zephyr_app/analyze_event_perf.sh
+          bash -n erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh
+          bash -n erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh
+
+      - name: Validate committed nominal baseline
+        run: |
+          erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh \
+            system/doc/M5_BASELINE_NOMINAL_SOAK.csv \
+            --scenario nominal_soak_10m \
+            --min-event-rate-hz 2.0 \
+            --max-drop-pct 0.10 \
+            --min-processed-pct 99.0 \
+            --max-sensor-p99-ms 1300
+
+      - name: Validate committed recovery baseline
+        run: |
+          erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh \
+            system/doc/M5_BASELINE_RECOVERY.csv \
+            --scenario recovery_evidence \
+            --min-event-rate-hz 3.0 \
+            --max-drop-pct 0.10 \
+            --min-processed-pct 99.0 \
+            --max-sensor-p99-ms 2100

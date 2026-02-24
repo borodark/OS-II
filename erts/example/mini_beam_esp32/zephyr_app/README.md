@@ -78,12 +78,20 @@ M5 performance baseline from log data:
 ```bash
 ./analyze_event_perf.sh logs/recovery_evidence.log
 ./analyze_event_perf.sh logs/nominal_soak_10m.log --scenario nominal_soak_10m --csv ../../../system/doc/M5_BASELINE_NOMINAL_SOAK.csv
+./analyze_event_perf.sh logs/nominal_soak_10m.log --scenario nominal_soak_10m --json logs/nominal_soak_10m.json
 ./check_perf_regression.sh ../../../system/doc/M5_BASELINE_NOMINAL_SOAK.csv \
   --scenario nominal_soak_10m \
   --min-event-rate-hz 2.0 \
   --max-drop-pct 0.10 \
   --min-processed-pct 99.0 \
   --max-sensor-p99-ms 1300
+```
+
+Long soak profile helper (captures + analyzes + gates):
+
+```bash
+./run_soak_profile.sh --profile 30m --sudo-chown
+./run_soak_profile.sh --profile 60m --sudo-chown
 ```
 
 Board debug instructions:

@@ -14,6 +14,7 @@ cd erts/example/mini_beam_esp32/zephyr_app
 ./analyze_event_perf.sh logs/fault_test.log
 ./analyze_event_perf.sh logs/recovery_evidence.log
 ./analyze_event_perf.sh logs/nominal_soak_10m.log --scenario nominal_soak_10m --csv ../../../system/doc/M5_BASELINE_NOMINAL_SOAK.csv
+./analyze_event_perf.sh logs/nominal_soak_10m.log --scenario nominal_soak_10m --json logs/nominal_soak_10m.json
 ./analyze_event_perf.sh logs/recovery_evidence.log --scenario recovery_evidence --csv ../../../system/doc/M5_BASELINE_RECOVERY.csv
 ```
 
@@ -99,8 +100,28 @@ cd erts/example/mini_beam_esp32/zephyr_app
   --max-sensor-p99-ms 1300
 ```
 
+CI workflow (`.github/workflows/perf-gate.yml`) runs this gate on each push/PR.
+
+## Soak Profiles
+
+Use `run_soak_profile.sh` for repeatable long-run captures:
+
+```bash
+cd erts/example/mini_beam_esp32/zephyr_app
+./run_soak_profile.sh --profile 10m --sudo-chown
+./run_soak_profile.sh --profile 30m --sudo-chown
+./run_soak_profile.sh --profile 60m --sudo-chown
+```
+
+Outputs per profile:
+- `logs/nominal_soak_<profile>.log`
+- `logs/nominal_soak_<profile>.csv`
+- `logs/nominal_soak_<profile>.json`
+
+Reference runbook: `system/doc/M5_SOAK_PROFILES.md`
+
 ## Next M5 Steps
 
-1. Add optional JSON output mode next to CSV for notebook ingestion.
-2. Extend checks with global inter-event delta p95/p99 across all sensors.
-3. Wire `check_perf_regression.sh` into CI to fail on threshold violations.
+1. Capture and commit a 30-minute baseline CSV/JSON from hardware.
+2. Capture and commit a 60-minute baseline CSV/JSON from hardware.
+3. Extend checks with global inter-event delta p95/p99 across all sensors.

@@ -3,6 +3,7 @@ set -euo pipefail
 
 LOG_FILE="${1:-}"
 CSV_OUT=""
+JSON_OUT=""
 SCENARIO="default"
 shift || true
 
@@ -16,6 +17,10 @@ while [[ $# -gt 0 ]]; do
       SCENARIO="${2:?missing value for --scenario}"
       shift 2
       ;;
+    --json)
+      JSON_OUT="${2:?missing value for --json}"
+      shift 2
+      ;;
     *)
       echo "unknown argument: $1" >&2
       exit 2
@@ -24,7 +29,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$LOG_FILE" ]]; then
-  echo "usage: $0 <log-file> [--csv <out.csv>] [--scenario <name>]" >&2
+  echo "usage: $0 <log-file> [--csv <out.csv>] [--json <out.json>] [--scenario <name>]" >&2
   exit 2
 fi
 
@@ -204,4 +209,25 @@ if [[ -n "$CSV_OUT" ]]; then
     done | sort
   } > "$CSV_OUT"
   echo "csv_written=$CSV_OUT"
+fi
+
+if [[ -n "$JSON_OUT" ]]; then
+  {
+    echo "{"
+    printf '  "scenario": "%s",\n' "$SCENARIO"
+    echo '  "metrics": {'
+    mapfile -t sorted_keys < <(printf '%s\n' "${!METRICS[@]}" | sort)
+    for idx in "${!sorted_keys[@]}"; do
+      key="${sorted_keys[$idx]}"
+      val="${METRICS[$key]}"
+      comma=","
+      if (( idx == ${#sorted_keys[@]} - 1 )); then
+        comma=""
+      fi
+      printf '    "%s": "%s"%s\n' "$key" "$val" "$comma"
+    done
+    echo "  }"
+    echo "}"
+  } > "$JSON_OUT"
+  echo "json_written=$JSON_OUT"
 fi

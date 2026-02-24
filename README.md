@@ -141,7 +141,12 @@ export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bos
 
 M5 starter tooling:
 - `erts/example/mini_beam_esp32/zephyr_app/analyze_event_perf.sh`
+- `erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh`
+- `erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh`
 - `system/doc/M5_PERF_BASELINE.md`
+
+CI perf gate:
+- `.github/workflows/perf-gate.yml`
 
 ## Repository Split Note
 
