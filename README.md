@@ -1,13 +1,20 @@
 # OS/II Runtime Research
 
+Deterministic, BEAM-inspired embedded runtime research for microcontrollers.
+
+This repo contains the active OS/II prototype:
+- `OS/II` mini VM runtime for MCU orchestration
+- Zephyr hardware path for `nRF52840` boards
+- validated bring-up on Arduino Nano 33 BLE Sense sensors
+
 
 ## why
 
-```
 The Nordic Semiconductor nRF52840 SoC, featuring a 64 MHz ARM Cortex-M4 with a Floating Point Unit (FPU), 1MB Flash, and 256KB RAM, provides computing power that is significantly higher than typical mid-90s consumer PCs in terms of raw CPU efficiency, despite having far less memory and storage. [1, 2, 3, 4, 5].
+
 It is best compared to a high-end 1994–1995 desktop PC, such as a Compaq Presario running an Intel DX4-100 or an early 60MHz/66MHz Pentium processor. [6, 7, 8]  almost without RAM, 256KB must be plenty.
 
-Performance Comparison Points
+### Performance Comparison Points
 
 • CPU Speed (64 MHz Cortex-M4 vs. 66 MHz Pentium/100 MHz 486): The Cortex-M4 architecture is vastly more efficient per clock cycle than 90s processors. While the clock speed (64 MHz) matches a mid-90s Pentium, the CoreMark benchmark score (roughly 215 CoreMark) means the nRF52840 handles math and logic operations more like a slightly faster Pentium.
 
@@ -20,7 +27,7 @@ Performance Comparison Points
 Summary: For raw, specialized, and efficient calculation (especially floating-point), the nRF52840 is roughly comparable to a 1994 Compaq Deskpro with a 66MHz Intel Pentium. [2, 11, 13] almost without RAM
 
 
-AI responses may include mistakes.
+_AI responses may include mistakes.__
 
 [1] https://www.nordicsemi.com/Products/nRF52840
 [2] http://files.pine64.org/doc/datasheet/pinetime/nRF52840%20product%20brief.pdf
@@ -35,15 +42,9 @@ AI responses may include mistakes.
 [11] https://www.ultralibrarian.com/2026/1/9/nrf52840-datasheet-explained/
 [12] https://www.ic-components.com/blog/Comparing-NRF5340-and-NRF52840-Bluetooth-LE,and-NFC.jsp
 [13] https://www.mouser.com/datasheet/2/297/nrf52840_soc_v3_0-2942478.pdf
-```
 
 
-Deterministic, BEAM-inspired embedded runtime research for microcontrollers.
 
-This repo contains the active OS/II prototype:
-- `OS/II` mini VM runtime for MCU orchestration
-- Zephyr hardware path for `nRF52840` boards
-- validated bring-up on Arduino Nano 33 BLE Sense sensors
 
 ## Project Focus
 
