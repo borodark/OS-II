@@ -17,6 +17,19 @@
 
 #include "mb_vm.h"
 
+/*
+ * Module: OS/II Zephyr runtime (nRF52840 / Nano 33 BLE Sense path)
+ *
+ * Responsibilities:
+ * - Bring up USB logging + optional sensor power rails and I2C pull-ups.
+ * - Build/execute a small register-VM bytecode program that consumes mailbox
+ *   commands and dispatches BIFs (I2C read, PWM set duty, monotonic timestamp).
+ * - Periodically enqueue sensor read commands and PWM actuator commands.
+ * - Emit stable event logs (sensor_event / actuator_event) using schema v1.
+ * - Apply bounded-mailbox backpressure, retry/degraded policy, and watchdog
+ *   recovery when degraded state persists beyond grace period.
+ */
+
 LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 
 /* Locked event schema constants (v1). Keep in sync with contract doc. */
