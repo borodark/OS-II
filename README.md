@@ -1,5 +1,43 @@
 # OS/II Runtime Research
 
+
+## why
+
+```
+The Nordic Semiconductor nRF52840 SoC, featuring a 64 MHz ARM Cortex-M4 with a Floating Point Unit (FPU), 1MB Flash, and 256KB RAM, provides computing power that is significantly higher than typical mid-90s consumer PCs in terms of raw CPU efficiency, despite having far less memory and storage. [1, 2, 3, 4, 5].
+It is best compared to a high-end 1994–1995 desktop PC, such as a Compaq Presario running an Intel DX4-100 or an early 60MHz/66MHz Pentium processor. [6, 7, 8]  almost without RAM, 256KB must be plenty.
+
+Performance Comparison Points
+
+• CPU Speed (64 MHz Cortex-M4 vs. 66 MHz Pentium/100 MHz 486): The Cortex-M4 architecture is vastly more efficient per clock cycle than 90s processors. While the clock speed (64 MHz) matches a mid-90s Pentium, the CoreMark benchmark score (roughly 215 CoreMark) means the nRF52840 handles math and logic operations more like a slightly faster Pentium.
+
+• Floating Point Unit (FPU): The nRF52840 includes a hardware FPU. In the early 90s, this was a premium feature (like a 486DX vs 486SX) or required a dedicated math coprocessor, making the nRF52840's floating-point performance superior to standard 1990–1993 486 machines.
+
+• RAM (256 KB vs. 4 MB–8 MB): This is the main difference. A 90s PC needed massive RAM to load Windows 3.1/95. The nRF52840 is an embedded system, meaning 256KB of RAM is generous for its tasks, but it is vastly lower than the megabytes used in 1995. So its almost without RAM
+
+• Compute Density: The nRF52840 fits a processor, radio (Bluetooth 5), and memory into a single chip smaller than a fingernail, whereas a 90s computer required a motherboard, multiple cards, and a large power supply to achieve similar raw CPU throughput. [1, 9, 10, 11, 12]
+
+Summary: For raw, specialized, and efficient calculation (especially floating-point), the nRF52840 is roughly comparable to a 1994 Compaq Deskpro with a 66MHz Intel Pentium. [2, 11, 13] almost without RAM
+
+
+AI responses may include mistakes.
+
+[1] https://www.nordicsemi.com/Products/nRF52840
+[2] http://files.pine64.org/doc/datasheet/pinetime/nRF52840%20product%20brief.pdf
+[3] https://www.ultralibrarian.com/2026/1/9/nrf52840-datasheet-explained/
+[4] https://www.nordicsemi.com/Nordic-news/2018/11/nRF52840-is-one-of-the-first-devices-to-support-Bluetooth-LE-with-Amazon-FreeRTOS
+[5] https://www.digikey.com/en/product-highlight/n/nordic-semi/nrf52840-multi-protocol-soc
+[6] https://www.vogons.org/viewtopic.php?t=54682
+[7] https://www.vogons.org/viewtopic.php?t=75199
+[8] https://en.wikipedia.org/wiki/Pentium_(original)
+[9] https://www.reddit.com/r/digitalfoundry/comments/1m88nav/how_much_more_powerful_are_modern_pcs_than_early/
+[10] https://forum.seeedstudio.com/t/nrf52840-product-specification-v1-7-revision-history-november-2021/273218
+[11] https://www.ultralibrarian.com/2026/1/9/nrf52840-datasheet-explained/
+[12] https://www.ic-components.com/blog/Comparing-NRF5340-and-NRF52840-Bluetooth-LE,and-NFC.jsp
+[13] https://www.mouser.com/datasheet/2/297/nrf52840_soc_v3_0-2942478.pdf
+```
+
+
 Deterministic, BEAM-inspired embedded runtime research for microcontrollers.
 
 This repo contains the active OS/II prototype:
@@ -91,6 +129,15 @@ export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bos
 - story draft: `system/doc/README_GITHUB_STORY.md`
 - contributor call: `system/doc/CALL_FOR_CONTRIBUTIONS.md`
 - MSc/PhD framing: `system/doc/RESEARCH_PLAN_MSC_PHD.md`
+
+## Roadmap (M0–M5)
+
+- `M0` VM boot + static program execution (done)
+- `M1` GPIO/PWM/I2C orchestration on hardware (done baseline)
+- `M2` sensor event loop + mailbox policy expansion (in progress)
+- `M3` memory model hardening + long-run stability tests
+- `M4` resilience features: watchdog, fault recovery, soak runs
+- `M5` performance characterization + contract freeze
 
 ## Repository Split Note
 

@@ -12,3 +12,8 @@ target_include_directories(app PRIVATE ../include)
 
 target_compile_definitions(app PRIVATE MB_USE_NRF52)
 target_compile_definitions(app PRIVATE MB_STRICT_DTS)
+
+if(DEFINED OS2_FAULT_EVERY_N)
+  target_compile_definitions(app PRIVATE OS2_FAULT_EVERY_N=${OS2_FAULT_EVERY_N})
+  message(STATUS "OS2_FAULT_EVERY_N=${OS2_FAULT_EVERY_N}")
+endif()

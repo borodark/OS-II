@@ -6,6 +6,8 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/sys/reboot.h>
+#include <zephyr/task_wdt/task_wdt.h>
 #include <hal/nrf_clock.h>
 
 #if defined(CONFIG_USB_DEVICE_STACK)
@@ -15,6 +17,43 @@
 #include "mb_vm.h"
 
 LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
+
+/* Locked event schema constants (v1). Keep in sync with contract doc. */
+#define OS2_EVENT_SCHEMA_VERSION 1
+#define OS2_EVENT_STATUS_OK 0
+#define OS2_EVENT_STATUS_IO_ERROR 1
+#define OS2_EVENT_STATUS_BAD_ARGUMENT 2
+#define OS2_EVENT_STATUS_INTERNAL_ERROR 3
+#define OS2_EVENT_STATUS_RETRYING 4
+#define OS2_EVENT_STATUS_DEGRADED 5
+#define OS2_EVENT_STATUS_RECOVERED 6
+
+/* VM register mapping used by cyclic sensor routine. */
+#define OS2_REG_CMD_TYPE 0
+#define OS2_REG_BUS 1
+#define OS2_REG_ADDR 2
+#define OS2_REG_REG 3
+#define OS2_REG_SENSOR_ID 9
+#define OS2_REG_VALUE 7
+#define OS2_REG_TS 8
+#define OS2_REG_EVENT_MARK 10
+#define OS2_REG_EVT_BUS 11
+#define OS2_REG_EVT_ADDR 12
+#define OS2_REG_EVT_REG 13
+
+/* Mailbox backpressure policy (v1): reject new command when mailbox is full. */
+#define OS2_MB_POLICY_REJECT_NEW 1
+#define OS2_STATS_LOG_PERIOD_MS 5000U
+#define OS2_RETRY_LIMIT 2U
+#define OS2_RETRY_BACKOFF_MS 200U
+#define OS2_DEGRADED_BACKOFF_MS 2000U
+#define OS2_WDT_TIMEOUT_MS 6000U
+#define OS2_WDT_DEGRADED_GRACE_MS 10000U
+
+/* Set >0 to inject a synthetic read failure every Nth sensor read. */
+#ifndef OS2_FAULT_EVERY_N
+#define OS2_FAULT_EVERY_N 0
+#endif
 
 #if DT_NODE_HAS_STATUS(DT_ALIAS(i2c0), okay)
 #define OS2_I2C0_NODE DT_ALIAS(i2c0)
@@ -76,6 +115,22 @@ typedef struct {
     uint8_t addr;
     uint8_t reg;
 } os2_sensor_target_t;
+
+typedef struct {
+    uint32_t attempted;
+    uint32_t pushed;
+    uint32_t dropped_full;
+    uint32_t processed;
+} os2_mb_stats_t;
+
+typedef struct {
+    uint8_t id;
+    uint8_t degraded;
+    uint32_t read_count;
+    uint32_t consecutive_errors;
+    uint32_t backoff_until_ms;
+    uint32_t degraded_since_ms;
+} os2_sensor_runtime_t;
 
 static const os2_sensor_sig_t os2_sensor_sigs[] = {
     {"MPU60x0/92x0", 0, 0x68, 0x75, 0x68, 0x7E},
@@ -160,7 +215,22 @@ static size_t os2_build_cyclic_program(void) {
     os2_emit_u8(&pc, 0);
     os2_emit_u8(&pc, 8);
 
-    /* copy sensor_id to r9 and cmd type to r10 (event marker) */
+    /* copy context to event registers */
+    os2_emit_u8(&pc, MB_OP_MOVE);
+    os2_emit_u8(&pc, OS2_REG_EVT_BUS);
+    os2_emit_u8(&pc, OS2_REG_BUS);
+    os2_emit_u8(&pc, 0);
+
+    os2_emit_u8(&pc, MB_OP_MOVE);
+    os2_emit_u8(&pc, OS2_REG_EVT_ADDR);
+    os2_emit_u8(&pc, OS2_REG_ADDR);
+    os2_emit_u8(&pc, 0);
+
+    os2_emit_u8(&pc, MB_OP_MOVE);
+    os2_emit_u8(&pc, OS2_REG_EVT_REG);
+    os2_emit_u8(&pc, OS2_REG_REG);
+    os2_emit_u8(&pc, 0);
+
     os2_emit_u8(&pc, MB_OP_MOVE);
     os2_emit_u8(&pc, 9);
     os2_emit_u8(&pc, 4);
@@ -276,14 +346,83 @@ static size_t os2_i2c_signature_scan(os2_sensor_target_t *targets, size_t max_ta
     return found;
 }
 
+static int os2_enqueue_sensor_cmd(mb_vm_t *vm, const os2_sensor_target_t *target, os2_mb_stats_t *stats) {
+    mb_command_t cmd;
+    int rc;
+
+    stats->attempted++;
+
+    cmd.type = MB_CMD_I2C_READ;
+    cmd.a = target->bus;
+    cmd.b = target->addr;
+    cmd.c = target->reg;
+    cmd.d = target->id;
+
+#if OS2_MB_POLICY_REJECT_NEW
+    if (vm->mailbox.count >= MB_MAILBOX_CAPACITY) {
+        stats->dropped_full++;
+        return MB_MAILBOX_FULL;
+    }
+#endif
+
+    rc = mb_vm_mailbox_push(vm, cmd);
+    if (rc == MB_OK) {
+        stats->pushed++;
+    } else if (rc == MB_MAILBOX_FULL) {
+        stats->dropped_full++;
+    }
+    return rc;
+}
+
+static os2_sensor_runtime_t *os2_find_runtime(os2_sensor_runtime_t *runtimes, size_t count, uint8_t sensor_id) {
+    size_t i;
+    for (i = 0; i < count; i++) {
+        if (runtimes[i].id == sensor_id) {
+            return &runtimes[i];
+        }
+    }
+    return NULL;
+}
+
+static void os2_task_wdt_cb(int channel_id, void *user_data) {
+    ARG_UNUSED(channel_id);
+    ARG_UNUSED(user_data);
+    LOG_ERR("task watchdog fired, rebooting");
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+static int os2_task_wdt_start(void) {
+    int rc = task_wdt_init(NULL);
+    if (rc < 0) {
+        return rc;
+    }
+    return task_wdt_add(OS2_WDT_TIMEOUT_MS, os2_task_wdt_cb, NULL);
+}
+
+static uint8_t os2_should_withhold_wdt_feed(const os2_sensor_runtime_t *runtimes, size_t count, uint32_t now_ms) {
+    size_t i;
+    for (i = 0; i < count; i++) {
+        if (runtimes[i].degraded &&
+            (now_ms - runtimes[i].degraded_since_ms) >= OS2_WDT_DEGRADED_GRACE_MS) {
+            return 1U;
+        }
+    }
+    return 0U;
+}
+
 int main(void) {
     mb_vm_t vm;
     int rc;
     os2_sensor_target_t targets[6];
     size_t target_count = 0;
     uint32_t last_ts = 0;
+    uint32_t last_stats_ts = 0;
     size_t i;
     size_t program_size;
+    os2_mb_stats_t mb_stats = {0};
+    os2_sensor_runtime_t runtimes[6] = {0};
+    int wdt_channel = -1;
+    uint8_t wdt_feed_blocked = 0;
 
 #if defined(CONFIG_USB_DEVICE_STACK)
     {
@@ -304,6 +443,15 @@ int main(void) {
 #endif
 
     LOG_INF("mini_beam_nrf52 start");
+    LOG_INF("event schema v%d", OS2_EVENT_SCHEMA_VERSION);
+
+    wdt_channel = os2_task_wdt_start();
+    if (wdt_channel < 0) {
+        LOG_ERR("task_wdt init failed rc=%d", wdt_channel);
+        return wdt_channel;
+    }
+    LOG_INF("task_wdt enabled timeout_ms=%u grace_ms=%u",
+        OS2_WDT_TIMEOUT_MS, OS2_WDT_DEGRADED_GRACE_MS);
 
     os2_try_enable_i2c_pullups();
     k_msleep(5);
@@ -323,21 +471,23 @@ int main(void) {
                 targets[i].id, targets[i].name, targets[i].bus, targets[i].addr, targets[i].reg);
         }
     }
+    for (i = 0; i < target_count; i++) {
+        runtimes[i].id = targets[i].id;
+    }
 
     program_size = os2_build_cyclic_program();
     mb_vm_init(&vm, demo_program, program_size);
 
     while (1) {
         for (i = 0; i < target_count; i++) {
-            mb_command_t cmd = {
-                .type = MB_CMD_I2C_READ,
-                .a = targets[i].bus,
-                .b = targets[i].addr,
-                .c = targets[i].reg,
-                .d = targets[i].id
-            };
+            os2_sensor_runtime_t *rt = &runtimes[i];
+            uint32_t now_ms = k_uptime_get_32();
 
-            rc = mb_vm_mailbox_push(&vm, cmd);
+            if (now_ms < rt->backoff_until_ms) {
+                continue;
+            }
+
+            rc = os2_enqueue_sensor_cmd(&vm, &targets[i], &mb_stats);
             if (rc != MB_OK) {
                 LOG_WRN("mailbox full/drop sensor_id=%u rc=%d", targets[i].id, rc);
                 continue;
@@ -349,20 +499,103 @@ int main(void) {
                 return rc;
             }
 
-            if (vm.regs[10] == MB_CMD_I2C_READ && (uint32_t)vm.regs[8] != last_ts) {
+            if (vm.regs[OS2_REG_EVENT_MARK] == MB_CMD_I2C_READ &&
+                (uint32_t)vm.regs[OS2_REG_TS] != last_ts) {
                 const char *name = "unknown";
+                int32_t status = OS2_EVENT_STATUS_OK;
+                int32_t event_value = vm.regs[OS2_REG_VALUE];
+                uint8_t sensor_id = (uint8_t)vm.regs[OS2_REG_SENSOR_ID];
+                uint8_t injected_fault = 0;
+                os2_sensor_runtime_t *event_rt = NULL;
                 size_t j;
                 for (j = 0; j < target_count; j++) {
-                    if ((uint8_t)vm.regs[9] == targets[j].id) {
+                    if (sensor_id == targets[j].id) {
                         name = targets[j].name;
                         break;
                     }
                 }
-                LOG_INF("event sensor_id=%d name=%s bus=%d addr=0x%02x reg=0x%02x value=%d ts=%u",
-                    vm.regs[9], name, vm.regs[1], vm.regs[2], vm.regs[3], vm.regs[7], (uint32_t)vm.regs[8]);
-                last_ts = (uint32_t)vm.regs[8];
-                vm.regs[10] = MB_CMD_NONE;
+                event_rt = os2_find_runtime(runtimes, target_count, sensor_id);
+
+#if OS2_FAULT_EVERY_N > 0
+                if (event_rt != NULL) {
+                    event_rt->read_count++;
+                    if ((event_rt->read_count % OS2_FAULT_EVERY_N) == 0U) {
+                        event_value = -5;
+                        injected_fault = 1;
+                    }
+                }
+#else
+                if (event_rt != NULL) {
+                    event_rt->read_count++;
+                }
+#endif
+
+                if (event_value < 0) {
+                    status = OS2_EVENT_STATUS_IO_ERROR;
+                    if (event_value == -22) {
+                        status = OS2_EVENT_STATUS_BAD_ARGUMENT;
+                    }
+                    if (event_rt != NULL) {
+                        event_rt->consecutive_errors++;
+                        if (event_rt->consecutive_errors <= OS2_RETRY_LIMIT) {
+                            status = OS2_EVENT_STATUS_RETRYING;
+                            event_rt->backoff_until_ms = (uint32_t)vm.regs[OS2_REG_TS] + OS2_RETRY_BACKOFF_MS;
+                        } else {
+                            status = OS2_EVENT_STATUS_DEGRADED;
+                            if (!event_rt->degraded) {
+                                event_rt->degraded_since_ms = (uint32_t)vm.regs[OS2_REG_TS];
+                            }
+                            event_rt->degraded = 1;
+                            event_rt->backoff_until_ms =
+                                (uint32_t)vm.regs[OS2_REG_TS] + OS2_DEGRADED_BACKOFF_MS;
+                        }
+                    }
+                } else if (event_rt != NULL) {
+                    if (event_rt->degraded) {
+                        status = OS2_EVENT_STATUS_RECOVERED;
+                    }
+                    event_rt->degraded = 0;
+                    event_rt->consecutive_errors = 0;
+                    event_rt->backoff_until_ms = 0;
+                    event_rt->degraded_since_ms = 0;
+                }
+
+                LOG_INF("event sensor_id=%d name=%s bus=%d addr=0x%02x reg=0x%02x value=%d ts=%u status=%d inj=%u",
+                    sensor_id,
+                    name,
+                    vm.regs[OS2_REG_EVT_BUS],
+                    vm.regs[OS2_REG_EVT_ADDR],
+                    vm.regs[OS2_REG_EVT_REG],
+                    event_value,
+                    (uint32_t)vm.regs[OS2_REG_TS],
+                    status,
+                    injected_fault);
+                last_ts = (uint32_t)vm.regs[OS2_REG_TS];
+                vm.regs[OS2_REG_EVENT_MARK] = MB_CMD_NONE;
+                mb_stats.processed++;
             }
+        }
+        if ((last_ts - last_stats_ts) >= OS2_STATS_LOG_PERIOD_MS) {
+            LOG_INF("mb_stats attempted=%u pushed=%u dropped_full=%u processed=%u depth=%u/%u policy=reject_new",
+                mb_stats.attempted,
+                mb_stats.pushed,
+                mb_stats.dropped_full,
+                mb_stats.processed,
+                (unsigned)vm.mailbox.count,
+                (unsigned)MB_MAILBOX_CAPACITY);
+            last_stats_ts = last_ts;
+        }
+        if (os2_should_withhold_wdt_feed(runtimes, target_count, k_uptime_get_32())) {
+            if (!wdt_feed_blocked) {
+                LOG_ERR("sensor degraded beyond grace; withholding task_wdt feed for recovery reboot");
+                wdt_feed_blocked = 1;
+            }
+        } else {
+            if (task_wdt_feed(wdt_channel) < 0) {
+                LOG_ERR("task_wdt feed failed");
+                return -1;
+            }
+            wdt_feed_blocked = 0;
         }
         k_msleep(200);
     }

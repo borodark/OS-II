@@ -69,3 +69,62 @@ Any opcode/BIF/ABI change must:
 1. Update this contract file.
 2. Keep host demos compiling.
 3. Include migration note in `system/doc/mini_beam_esp32_plan.md`.
+
+## 7. Sensor Event Schema (v1)
+
+For cyclic sensor orchestration, OS/II emits typed events in log form with
+locked fields and ordering:
+
+`sensor_id, value, ts, status`
+
+Extended emitted record currently includes transport context:
+`sensor_id, name, bus, addr, reg, value, ts, status`
+
+### Field Definitions
+
+- `sensor_id` (int32): stable sensor target identifier from discovery table.
+- `value` (int32): sensor read value (0..255) or negative error code.
+- `ts` (uint32 in log): monotonic timestamp in milliseconds.
+- `status` (int32 enum):
+  - `0` = `OS2_EVENT_STATUS_OK`
+  - `1` = `OS2_EVENT_STATUS_IO_ERROR`
+  - `2` = `OS2_EVENT_STATUS_BAD_ARGUMENT`
+  - `3` = `OS2_EVENT_STATUS_INTERNAL_ERROR`
+  - `4` = `OS2_EVENT_STATUS_RETRYING`
+  - `5` = `OS2_EVENT_STATUS_DEGRADED`
+  - `6` = `OS2_EVENT_STATUS_RECOVERED`
+
+### Mapping Rule (v1)
+
+- If `value >= 0` then `status = OS2_EVENT_STATUS_OK`.
+- If `value < 0` then `status` is mapped from error class (currently I/O or
+  argument validation paths).
+- First-pass resilience behavior:
+  - first `OS2_RETRY_LIMIT` consecutive failures emit `RETRYING`
+  - failures beyond retry limit emit `DEGRADED`
+  - first subsequent successful read after degraded state emits `RECOVERED`
+  - degraded/retry backoff windows are controlled by
+    `OS2_RETRY_BACKOFF_MS` and `OS2_DEGRADED_BACKOFF_MS`
+  - if degraded persists past watchdog grace window, runtime triggers cold
+    reboot recovery through task watchdog timeout
+
+### Fault Injection Switch
+
+- Build-time macro: `OS2_FAULT_EVERY_N` (default `0`, disabled).
+- When set to `N > 0`, every Nth read per sensor runtime is forced to an I/O
+  error path for resilience testing.
+
+## 8. Mailbox Backpressure Policy (v1)
+
+Policy: `reject_new` when mailbox is full.
+
+- Queue capacity remains `MB_MAILBOX_CAPACITY`.
+- On enqueue attempt while full, command is dropped and counted.
+- Runtime counters are emitted periodically:
+  - `attempted`
+  - `pushed`
+  - `dropped_full`
+  - `processed`
+  - queue depth (`depth/capacity`)
+
+This policy is deterministic and side-effect free on existing queued commands.

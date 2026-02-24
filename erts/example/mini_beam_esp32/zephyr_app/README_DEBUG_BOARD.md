@@ -196,6 +196,17 @@ west build -t menuconfig
 # and inspect build/zephyr/zephyr.dts
 ```
 
+Reliable serial logger (auto-reconnect, file append):
+```bash
+./start_serial_log.sh --log logs/nano33.log --sudo-chown
+tail -n +1 -F logs/nano33.log --sleep-interval=0.1
+```
+
+One-command rebuild + redeploy + logging:
+```bash
+./redeploy_and_log.sh --log logs/nano33.log --sudo-chown
+```
+
 ## What to Share for Fast Debug Help
 
 - board target (`nrf52840dk/nrf52840` or `arduino_nano_33_ble`)

@@ -59,3 +59,34 @@ versioned decision entry in this document.
     more iterations on SAM-BA timing.
 - Rationale: this minimizes schedule risk and keeps OS/II runtime validation
   moving while preserving Nano compatibility as a secondary path.
+
+### 2026-02-23: Sensor Event Schema Lock (M2)
+
+- Decision: lock cyclic sensor event schema to
+  `{sensor_id, value, ts, status}` with stable status enums.
+- Implementation note: runtime may include extra transport context
+  (`name,bus,addr,reg`) but core four fields are authoritative for parsers.
+- Rationale: enables stable log parsing, metrics tooling, and fault analysis
+  while M2 mailbox policy work proceeds.
+
+### 2026-02-23: Mailbox Backpressure Policy Lock (M2)
+
+- Decision: use `reject_new` when mailbox capacity is reached.
+- Required runtime telemetry: `attempted`, `pushed`, `dropped_full`,
+  `processed`, and queue depth.
+- Rationale: deterministic drop behavior with explicit observability is simpler
+  to validate than adaptive queue mutation in early M2.
+
+### 2026-02-24: First-Pass Fault Recovery State Model (M4 bootstrap)
+
+- Decision: extend event `status` with `RETRYING`, `DEGRADED`, and
+  `RECOVERED` to make recovery transitions externally visible.
+- Decision: add bounded backoff windows in the runtime:
+  - retry backoff: `OS2_RETRY_BACKOFF_MS`
+  - degraded backoff: `OS2_DEGRADED_BACKOFF_MS`
+- Decision: add compile-time synthetic fault injection switch
+  `OS2_FAULT_EVERY_N` for repeatable failure-path testing.
+- Decision: add task watchdog recovery path; if degraded state persists beyond
+  grace window, runtime withholds watchdog feed to force cold reboot.
+- Rationale: this gives us low-cost, deterministic resilience telemetry before
+  watchdog and restart orchestration are added.

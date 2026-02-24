@@ -8,6 +8,10 @@ BOARD="${BOARD:-arduino_nano_33_ble/nrf52840/sense}"
 PORT="${PORT:-/dev/ttyACM0}"
 BOSSAC="${BOSSAC:-$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bossac}"
 ZEPHYR_WS="${ZEPHYR_WS:-${WEST_TOPDIR:-}}"
+SUDO_CHOWN="${SUDO_CHOWN:-0}"
+WAIT_BOOT_SECS="${WAIT_BOOT_SECS:-3}"
+OS2_FAULT_EVERY_N="${OS2_FAULT_EVERY_N:-}"
+FLASH_ATTEMPTS="${FLASH_ATTEMPTS:-3}"
 
 MONITOR=0
 if [[ "${1:-}" == "--monitor" ]]; then
@@ -48,15 +52,77 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/zephyr-cache}"
 export ZEPHYR_TOOLCHAIN_VARIANT="${ZEPHYR_TOOLCHAIN_VARIANT:-gnuarmemb}"
 export GNUARMEMB_TOOLCHAIN_PATH="${GNUARMEMB_TOOLCHAIN_PATH:-/usr}"
 
-sudo chown io:io /dev/ttyACM0
+ensure_port_owner() {
+  if [[ "$SUDO_CHOWN" -eq 1 && -e "$PORT" ]]; then
+    sudo chown "$USER:$USER" "$PORT" >/dev/null 2>&1 || true
+  fi
+}
+
+wait_for_port() {
+  local wait_secs="${1:-8}"
+  local i
+  for i in $(seq 1 "$wait_secs"); do
+    if [[ -e "$PORT" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+touch_bootloader_1200() {
+  # On Nano33 this usually triggers bootloader re-enumeration.
+  if [[ -e "$PORT" ]]; then
+    stty -F "$PORT" 1200 hupcl >/dev/null 2>&1 || true
+  fi
+}
 
 echo "[1/2] Building $BOARD into $BUILD_DIR"
-west build -b "$BOARD" -s "$APP_DIR" -d "$BUILD_DIR" -p always
+BUILD_ARGS=(
+  -b "$BOARD"
+  -s "$APP_DIR"
+  -d "$BUILD_DIR"
+  -p always
+)
+if [[ -n "$OS2_FAULT_EVERY_N" ]]; then
+  echo "[build] fault injection enabled: OS2_FAULT_EVERY_N=$OS2_FAULT_EVERY_N"
+  BUILD_ARGS+=(-- "-DOS2_FAULT_EVERY_N=$OS2_FAULT_EVERY_N")
+fi
+west build "${BUILD_ARGS[@]}"
+
+echo "[pre-flash] Releasing serial monitor processes on $PORT (if any)"
+pkill -f "screen $PORT" 2>/dev/null || true
+pkill -f "picocom.*$PORT" 2>/dev/null || true
+ensure_port_owner
+
+echo "[pre-flash] Trigger bootloader via 1200-baud touch"
+touch_bootloader_1200
+sleep "$WAIT_BOOT_SECS"
+wait_for_port "${WAIT_BOOT_SECS}" || true
+ensure_port_owner
 
 echo "[2/2] Flashing via bossac on $PORT"
-west flash -d "$BUILD_DIR" --runner bossac --bossac="$BOSSAC" --bossac-port "$PORT"
+FLASH_OK=0
+for attempt in $(seq 1 "$FLASH_ATTEMPTS"); do
+  echo "[flash] attempt ${attempt}/${FLASH_ATTEMPTS}"
+  if west flash -d "$BUILD_DIR" --runner bossac --bossac="$BOSSAC" --bossac-port "$PORT"; then
+    FLASH_OK=1
+    break
+  fi
+  echo "[flash] attempt ${attempt} failed; re-triggering bootloader touch"
+  touch_bootloader_1200
+  sleep "$WAIT_BOOT_SECS"
+  wait_for_port "${WAIT_BOOT_SECS}" || true
+  ensure_port_owner
+done
 
-sudo chown io:io /dev/ttyACM0
+if [[ "$FLASH_OK" -ne 1 ]]; then
+  echo "error: flashing failed after ${FLASH_ATTEMPTS} attempts" >&2
+  exit 1
+fi
+
+wait_for_port 8 || true
+ensure_port_owner
 
 echo "Flash complete."
 if [[ "$MONITOR" -eq 1 ]]; then
