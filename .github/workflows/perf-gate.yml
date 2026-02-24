@@ -17,23 +17,11 @@ jobs:
           bash -n erts/example/mini_beam_esp32/zephyr_app/analyze_event_perf.sh
           bash -n erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh
           bash -n erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh
+          bash -n erts/example/mini_beam_esp32/zephyr_app/perf_gate_rc.sh
+          bash -n erts/example/mini_beam_esp32/zephyr_app/promote_soak_baseline.sh
 
-      - name: Validate committed nominal baseline
+      - name: Validate RC perf profile
         run: |
-          erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh \
+          erts/example/mini_beam_esp32/zephyr_app/perf_gate_rc.sh \
             system/doc/M5_BASELINE_NOMINAL_SOAK.csv \
-            --scenario nominal_soak_10m \
-            --min-event-rate-hz 2.0 \
-            --max-drop-pct 0.10 \
-            --min-processed-pct 99.0 \
-            --max-sensor-p99-ms 1300
-
-      - name: Validate committed recovery baseline
-        run: |
-          erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh \
-            system/doc/M5_BASELINE_RECOVERY.csv \
-            --scenario recovery_evidence \
-            --min-event-rate-hz 3.0 \
-            --max-drop-pct 0.10 \
-            --min-processed-pct 99.0 \
-            --max-sensor-p99-ms 2100
+            system/doc/M5_BASELINE_RECOVERY.csv

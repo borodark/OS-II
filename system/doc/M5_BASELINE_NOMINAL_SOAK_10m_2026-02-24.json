@@ -1,0 +1,31 @@
+{
+  "scenario": "nominal_soak_10m",
+  "metrics": {
+    "duration_ms": "800008",
+    "event_rate_hz": "2.219",
+    "events_total": "1775",
+    "inj_events": "0",
+    "mb_delta_attempted": "1770",
+    "mb_delta_processed": "1770",
+    "mb_drop_over_attempted_pct": "0.00",
+    "mb_processed_over_attempted_pct": "100.00",
+    "sensor_1_avg_ms": "1352.73",
+    "sensor_1_events": "592",
+    "sensor_1_p50_ms": "1025",
+    "sensor_1_p95_ms": "1026",
+    "sensor_1_p99_ms": "1026",
+    "sensor_2_avg_ms": "1352.70",
+    "sensor_2_events": "592",
+    "sensor_2_p50_ms": "1025",
+    "sensor_2_p95_ms": "1026",
+    "sensor_2_p99_ms": "1026",
+    "sensor_3_avg_ms": "1015.83",
+    "sensor_3_events": "591",
+    "sensor_3_p50_ms": "1006",
+    "sensor_3_p95_ms": "1026",
+    "sensor_3_p99_ms": "1026",
+    "status_0": "1775",
+    "ts_max_ms": "889352",
+    "ts_min_ms": "89344"
+  }
+}

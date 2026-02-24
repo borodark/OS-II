@@ -101,6 +101,7 @@ cd erts/example/mini_beam_esp32/zephyr_app
 ```
 
 CI workflow (`.github/workflows/perf-gate.yml`) runs this gate on each push/PR.
+Thresholds are frozen in `system/config/perf_gate_rc.env`.
 
 ## Soak Profiles
 
@@ -111,6 +112,8 @@ cd erts/example/mini_beam_esp32/zephyr_app
 ./run_soak_profile.sh --profile 10m --sudo-chown
 ./run_soak_profile.sh --profile 30m --sudo-chown
 ./run_soak_profile.sh --profile 60m --sudo-chown
+./promote_soak_baseline.sh --profile 30m
+./promote_soak_baseline.sh --profile 60m
 ```
 
 Outputs per profile:

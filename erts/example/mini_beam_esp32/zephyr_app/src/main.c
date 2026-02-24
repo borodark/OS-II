@@ -29,7 +29,7 @@ LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 #define OS2_EVENT_STATUS_DEGRADED 5
 #define OS2_EVENT_STATUS_RECOVERED 6
 
-/* VM register mapping used by cyclic sensor routine. */
+/* VM register mapping used by cyclic sensor/actuator routine. */
 #define OS2_REG_CMD_TYPE 0
 #define OS2_REG_BUS 1
 #define OS2_REG_ADDR 2
@@ -41,6 +41,8 @@ LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 #define OS2_REG_EVT_BUS 11
 #define OS2_REG_EVT_ADDR 12
 #define OS2_REG_EVT_REG 13
+#define OS2_REG_CMD_PWM_SET_DUTY 14
+#define OS2_REG_TMP 15
 
 /* Mailbox backpressure policy (v1): reject new command when mailbox is full. */
 #define OS2_MB_POLICY_REJECT_NEW 1
@@ -50,6 +52,9 @@ LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 #define OS2_DEGRADED_BACKOFF_MS 2000U
 #define OS2_WDT_TIMEOUT_MS 6000U
 #define OS2_WDT_DEGRADED_GRACE_MS 10000U
+#define OS2_PWM_PERIOD_MS 1000U
+#define OS2_PWM_CHANNEL 0U
+#define OS2_PWM_ACTUATOR_ID 1U
 
 /* Set >0 to inject a synthetic read failure every Nth sensor read. */
 #ifndef OS2_FAULT_EVERY_N
@@ -193,7 +198,10 @@ static size_t os2_build_cyclic_program(void) {
     size_t pc = 0;
     size_t loop_pc;
     size_t jz_to_sleep_patch;
+    size_t jz_to_pwm_patch;
+    size_t jmp_over_pwm_patch;
     size_t jmp_to_loop_patch;
+    size_t pwm_path_pc;
 
     /* r6 = idle sleep ms, r10 = published cmd type */
     os2_emit_u8(&pc, MB_OP_CONST_I32);
@@ -203,6 +211,10 @@ static size_t os2_build_cyclic_program(void) {
     os2_emit_u8(&pc, MB_OP_CONST_I32);
     os2_emit_u8(&pc, 10);
     os2_emit_i32(&pc, MB_CMD_NONE);
+
+    os2_emit_u8(&pc, MB_OP_CONST_I32);
+    os2_emit_u8(&pc, OS2_REG_CMD_PWM_SET_DUTY);
+    os2_emit_i32(&pc, MB_CMD_PWM_SET_DUTY);
 
     loop_pc = pc;
     /* recv -> r0:type r1:bus r2:addr r3:reg r4:sensor_id */
@@ -217,6 +229,17 @@ static size_t os2_build_cyclic_program(void) {
     os2_emit_u8(&pc, MB_OP_JMP_IF_ZERO);
     os2_emit_u8(&pc, 0);
     jz_to_sleep_patch = pc;
+    os2_emit_i32(&pc, 0);
+
+    /* if r0 == MB_CMD_PWM_SET_DUTY jump to pwm path */
+    os2_emit_u8(&pc, MB_OP_SUB);
+    os2_emit_u8(&pc, OS2_REG_TMP);
+    os2_emit_u8(&pc, OS2_REG_CMD_TYPE);
+    os2_emit_u8(&pc, OS2_REG_CMD_PWM_SET_DUTY);
+
+    os2_emit_u8(&pc, MB_OP_JMP_IF_ZERO);
+    os2_emit_u8(&pc, OS2_REG_TMP);
+    jz_to_pwm_patch = pc;
     os2_emit_i32(&pc, 0);
 
     /* value/err in r7 */
@@ -260,6 +283,50 @@ static size_t os2_build_cyclic_program(void) {
     os2_emit_u8(&pc, 0);
     os2_emit_u8(&pc, 0);
 
+    os2_emit_u8(&pc, MB_OP_JMP);
+    jmp_over_pwm_patch = pc;
+    os2_emit_i32(&pc, 0);
+
+    pwm_path_pc = pc;
+    /* PWM path:
+     * r1=channel r2=permille r4=actuator_id, return code in r7
+     */
+    os2_emit_u8(&pc, MB_OP_CALL_BIF);
+    os2_emit_u8(&pc, MB_BIF_PWM_SET_DUTY);
+    os2_emit_u8(&pc, 2);
+    os2_emit_u8(&pc, OS2_REG_BUS);
+    os2_emit_u8(&pc, OS2_REG_ADDR);
+    os2_emit_u8(&pc, OS2_REG_VALUE);
+
+    os2_emit_u8(&pc, MB_OP_CALL_BIF);
+    os2_emit_u8(&pc, MB_BIF_MONOTONIC_MS);
+    os2_emit_u8(&pc, 0);
+    os2_emit_u8(&pc, OS2_REG_TS);
+
+    os2_emit_u8(&pc, MB_OP_MOVE);
+    os2_emit_u8(&pc, OS2_REG_EVT_BUS);
+    os2_emit_u8(&pc, OS2_REG_BUS);
+    os2_emit_u8(&pc, 0);
+
+    os2_emit_u8(&pc, MB_OP_MOVE);
+    os2_emit_u8(&pc, OS2_REG_EVT_ADDR);
+    os2_emit_u8(&pc, OS2_REG_ADDR);
+    os2_emit_u8(&pc, 0);
+
+    os2_emit_u8(&pc, MB_OP_CONST_I32);
+    os2_emit_u8(&pc, OS2_REG_EVT_REG);
+    os2_emit_i32(&pc, 0);
+
+    os2_emit_u8(&pc, MB_OP_MOVE);
+    os2_emit_u8(&pc, OS2_REG_SENSOR_ID);
+    os2_emit_u8(&pc, OS2_REG_REG);
+    os2_emit_u8(&pc, 0);
+
+    os2_emit_u8(&pc, MB_OP_MOVE);
+    os2_emit_u8(&pc, OS2_REG_EVENT_MARK);
+    os2_emit_u8(&pc, OS2_REG_CMD_TYPE);
+    os2_emit_u8(&pc, 0);
+
     /* jump back to loop */
     os2_emit_u8(&pc, MB_OP_JMP);
     jmp_to_loop_patch = pc;
@@ -272,6 +339,8 @@ static size_t os2_build_cyclic_program(void) {
     os2_emit_u8(&pc, MB_OP_JMP);
     os2_emit_i32(&pc, (int32_t)loop_pc - (int32_t)(pc + 4U));
 
+    os2_patch_rel_i32(jz_to_pwm_patch, pwm_path_pc);
+    os2_patch_rel_i32(jmp_over_pwm_patch, pc);
     os2_patch_rel_i32(jmp_to_loop_patch, loop_pc);
     return pc;
 }
@@ -393,6 +462,35 @@ static int os2_enqueue_sensor_cmd(mb_vm_t *vm, const os2_sensor_target_t *target
     return rc;
 }
 
+static int os2_enqueue_pwm_cmd(mb_vm_t *vm, uint8_t channel, uint16_t duty_permille,
+                               uint8_t actuator_id, os2_mb_stats_t *stats) {
+    mb_command_t cmd;
+    int rc;
+
+    stats->attempted++;
+
+    cmd.type = MB_CMD_PWM_SET_DUTY;
+    cmd.a = channel;
+    cmd.b = duty_permille;
+    cmd.c = 0;
+    cmd.d = actuator_id;
+
+#if OS2_MB_POLICY_REJECT_NEW
+    if (vm->mailbox.count >= MB_MAILBOX_CAPACITY) {
+        stats->dropped_full++;
+        return MB_MAILBOX_FULL;
+    }
+#endif
+
+    rc = mb_vm_mailbox_push(vm, cmd);
+    if (rc == MB_OK) {
+        stats->pushed++;
+    } else if (rc == MB_MAILBOX_FULL) {
+        stats->dropped_full++;
+    }
+    return rc;
+}
+
 static os2_sensor_runtime_t *os2_find_runtime(os2_sensor_runtime_t *runtimes, size_t count, uint8_t sensor_id) {
     size_t i;
     for (i = 0; i < count; i++) {
@@ -444,6 +542,9 @@ int main(void) {
     uint8_t wdt_feed_blocked = 0;
     uint32_t resetreas_raw = NRF_POWER->RESETREAS;
     uint16_t boot_counter = 0;
+    uint32_t last_pwm_ts = 0;
+    uint8_t pwm_step = 0;
+    static const uint16_t pwm_pattern[] = {150U, 500U, 850U, 500U};
 
 #if defined(CONFIG_USB_DEVICE_STACK)
     {
@@ -503,9 +604,19 @@ int main(void) {
     mb_vm_init(&vm, demo_program, program_size);
 
     while (1) {
+        uint32_t now_ms = k_uptime_get_32();
+        if ((now_ms - last_pwm_ts) >= OS2_PWM_PERIOD_MS) {
+            uint16_t duty = pwm_pattern[pwm_step % ARRAY_SIZE(pwm_pattern)];
+            rc = os2_enqueue_pwm_cmd(&vm, OS2_PWM_CHANNEL, duty, OS2_PWM_ACTUATOR_ID, &mb_stats);
+            if (rc != MB_OK) {
+                LOG_WRN("mailbox full/drop actuator_id=%u rc=%d", OS2_PWM_ACTUATOR_ID, rc);
+            } else {
+                pwm_step++;
+                last_pwm_ts = now_ms;
+            }
+        }
         for (i = 0; i < target_count; i++) {
             os2_sensor_runtime_t *rt = &runtimes[i];
-            uint32_t now_ms = k_uptime_get_32();
 
             if (now_ms < rt->backoff_until_ms) {
                 continue;
@@ -594,6 +705,19 @@ int main(void) {
                     (uint32_t)vm.regs[OS2_REG_TS],
                     status,
                     injected_fault);
+                last_ts = (uint32_t)vm.regs[OS2_REG_TS];
+                vm.regs[OS2_REG_EVENT_MARK] = MB_CMD_NONE;
+                mb_stats.processed++;
+            } else if (vm.regs[OS2_REG_EVENT_MARK] == MB_CMD_PWM_SET_DUTY &&
+                       (uint32_t)vm.regs[OS2_REG_TS] != last_ts) {
+                int32_t status = (vm.regs[OS2_REG_VALUE] < 0) ? OS2_EVENT_STATUS_IO_ERROR : OS2_EVENT_STATUS_OK;
+                LOG_INF("actuator_event actuator_id=%d type=pwm_set_duty channel=%d duty_permille=%d value=%d ts=%u status=%d",
+                    vm.regs[OS2_REG_SENSOR_ID],
+                    vm.regs[OS2_REG_EVT_BUS],
+                    vm.regs[OS2_REG_EVT_ADDR],
+                    vm.regs[OS2_REG_VALUE],
+                    (uint32_t)vm.regs[OS2_REG_TS],
+                    status);
                 last_ts = (uint32_t)vm.regs[OS2_REG_TS];
                 vm.regs[OS2_REG_EVENT_MARK] = MB_CMD_NONE;
                 mb_stats.processed++;

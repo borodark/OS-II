@@ -6,6 +6,8 @@ Use this command from repo root:
 ./erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh --profile 10m --sudo-chown
 ./erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh --profile 30m --sudo-chown
 ./erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh --profile 60m --sudo-chown
+./erts/example/mini_beam_esp32/zephyr_app/promote_soak_baseline.sh --profile 30m
+./erts/example/mini_beam_esp32/zephyr_app/promote_soak_baseline.sh --profile 60m
 ```
 
 Generated artifacts:
@@ -22,3 +24,4 @@ Suggested acceptance checks:
 - `sensor_3_p99_ms <= 1300`
 
 Promote stable runs by copying CSV/JSON into `system/doc/` with date/profile in filename.
+`promote_soak_baseline.sh` also updates `system/doc/M5_BASELINE_MANIFEST.csv`.

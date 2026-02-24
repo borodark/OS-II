@@ -130,7 +130,7 @@ export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bos
 - contributor call: `system/doc/CALL_FOR_CONTRIBUTIONS.md`
 - MSc/PhD framing: `system/doc/RESEARCH_PLAN_MSC_PHD.md`
 
-## Roadmap (M0–M5)
+## Roadmap (M0–M6)
 
 - `M0` VM boot + static program execution (done)
 - `M1` GPIO/PWM/I2C orchestration on hardware (done baseline)
@@ -138,11 +138,14 @@ export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bos
 - `M3` memory model hardening + long-run stability tests
 - `M4` resilience features: watchdog, fault recovery, soak runs (done)
 - `M5` performance characterization + contract freeze (in progress)
+- `M6` actuator control path (PWM mailbox first pass) (in progress)
 
 M5 starter tooling:
 - `erts/example/mini_beam_esp32/zephyr_app/analyze_event_perf.sh`
 - `erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh`
 - `erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh`
+- `erts/example/mini_beam_esp32/zephyr_app/perf_gate_rc.sh`
+- `erts/example/mini_beam_esp32/zephyr_app/promote_soak_baseline.sh`
 - `system/doc/M5_PERF_BASELINE.md`
 
 CI perf gate:
