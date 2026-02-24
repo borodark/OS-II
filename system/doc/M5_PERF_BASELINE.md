@@ -17,17 +17,27 @@ cd erts/example/mini_beam_esp32/zephyr_app
 
 ## Baseline Snapshot (2026-02-24)
 
-### Fault-injection every 5th read (`logs/fault_test.log`)
+### Nominal run (`logs/nominal_perf.log`)
 
-- `events_total=72`
-- `duration_ms=23897`
-- `event_rate_hz=3.013`
-- `inj_events=12`
-- `status_0=60`, `status_4=12`
+- `events_total=102`
+- `duration_ms=34076`
+- `event_rate_hz=2.993`
+- `inj_events=0`
+- `status_0=102`
 - per-sensor average period:
-  - `sensor_1_avg_ms=1015.39`
-  - `sensor_2_avg_ms=1016.22`
-  - `sensor_3_avg_ms=1015.35`
+  - `sensor_1_avg_ms=1016.12`
+  - `sensor_2_avg_ms=1015.52`
+  - `sensor_3_avg_ms=1016.12`
+- per-sensor period jitter (ms):
+  - `sensor_1 p50/p95/p99 = 1025/1026/1026`
+  - `sensor_2 p50/p95/p99 = 1006/1026/1026`
+  - `sensor_3 p50/p95/p99 = 1025/1026/1026`
+- mailbox correlation:
+  - first stats: `attempted=159 processed=159`
+  - last stats: `attempted=249 processed=249`
+  - `mb_processed_over_attempted_pct=100.00`
+  - `mb_drop_over_attempted_pct=0.00`
+  - `mb_delta_attempted=90`, `mb_delta_processed=90`
 
 ### Forced-failure recovery run (`logs/recovery_evidence.log`)
 
@@ -40,9 +50,19 @@ cd erts/example/mini_beam_esp32/zephyr_app
   - `sensor_1_avg_ms=773.94`
   - `sensor_2_avg_ms=773.89`
   - `sensor_3_avg_ms=773.89`
+- per-sensor period jitter (ms):
+  - `sensor_1 p50/p95/p99 = 2006/2027/2027`
+  - `sensor_2 p50/p95/p99 = 2007/2027/2027`
+  - `sensor_3 p50/p95/p99 = 2007/2027/2027`
+- mailbox correlation:
+  - first stats: `attempted=12 processed=12`
+  - last stats: `attempted=21 processed=21`
+  - `mb_processed_over_attempted_pct=100.00`
+  - `mb_drop_over_attempted_pct=0.00`
+  - `mb_delta_attempted=9`, `mb_delta_processed=9`
 
 ## Next M5 Steps
 
-1. Add nominal no-fault run (`OS2_FAULT_EVERY_N=0`) as primary throughput baseline.
-2. Capture jitter distribution (p50/p95/p99 period) per sensor.
-3. Correlate `mb_stats` throughput with event timing under load.
+1. Run a longer nominal soak (>= 10 min) to quantify drift and long-tail jitter.
+2. Add p50/p95/p99 for end-to-end inter-event deltas across all sensors.
+3. Add CSV/JSON output mode for analyzer to feed plotting notebooks.

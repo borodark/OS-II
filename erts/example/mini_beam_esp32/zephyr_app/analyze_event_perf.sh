@@ -13,12 +13,13 @@ if [[ ! -f "$LOG_FILE" ]]; then
 fi
 
 TMP_CLEAN="$(mktemp)"
-trap 'rm -f "$TMP_CLEAN"' EXIT
+TMP_PERIODS="$(mktemp)"
+trap 'rm -f "$TMP_CLEAN" "$TMP_PERIODS"' EXIT
 
 # Strip ANSI terminal color sequences from captured serial logs.
 sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g' "$LOG_FILE" > "$TMP_CLEAN"
 
-awk '
+awk -v periods_file="$TMP_PERIODS" '
   /event sensor_id=/ {
     sid=""; ts=""; st=""; inj="";
     for (i = 1; i <= NF; i++) {
@@ -43,8 +44,10 @@ awk '
       ts_max = ts;
     }
     if (last_ts[sid] > 0) {
-      sensor_period_sum[sid] += (ts - last_ts[sid]);
+      period = (ts - last_ts[sid]);
+      sensor_period_sum[sid] += period;
       sensor_period_n[sid]++;
+      print sid, period >> periods_file;
     }
     last_ts[sid] = ts;
   }
@@ -60,7 +63,7 @@ awk '
       print "duration_ms=0";
       print "event_rate_hz=0";
     }
-    print "inj_events=" inj_count;
+    print "inj_events=" (inj_count + 0);
     print "status_counts:";
     for (st in status_count) {
       print "  status_" st "=" status_count[st];
@@ -78,7 +81,65 @@ awk '
   }
 ' "$TMP_CLEAN"
 
+echo "sensor_period_ms_pct:"
+while IFS= read -r sid; do
+  mapfile -t periods < <(awk -v s="$sid" '$1 == s { print $2 }' "$TMP_PERIODS" | sort -n)
+  n="${#periods[@]}"
+  if (( n == 0 )); then
+    continue
+  fi
+  p50i=$(( (50 * n + 99) / 100 ))
+  p95i=$(( (95 * n + 99) / 100 ))
+  p99i=$(( (99 * n + 99) / 100 ))
+  (( p50i < 1 )) && p50i=1
+  (( p95i < 1 )) && p95i=1
+  (( p99i < 1 )) && p99i=1
+  (( p50i > n )) && p50i=$n
+  (( p95i > n )) && p95i=$n
+  (( p99i > n )) && p99i=$n
+  p50="${periods[$((p50i - 1))]}"
+  p95="${periods[$((p95i - 1))]}"
+  p99="${periods[$((p99i - 1))]}"
+  echo "  sensor_${sid}_p50_ms=${p50} sensor_${sid}_p95_ms=${p95} sensor_${sid}_p99_ms=${p99}"
+done < <(awk '{print $1}' "$TMP_PERIODS" | sort -u)
+
+first_mb="$(rg 'mb_stats attempted=' "$TMP_CLEAN" | head -n 1 || true)"
 last_mb="$(rg 'mb_stats attempted=' "$TMP_CLEAN" | tail -n 1 || true)"
+if [[ -n "$first_mb" ]]; then
+  echo "mb_stats_first: $first_mb"
+fi
 if [[ -n "$last_mb" ]]; then
   echo "mb_stats_last: $last_mb"
+fi
+
+extract_mb_num() {
+  local line="$1"
+  local key="$2"
+  sed -nE "s/.*${key}=([0-9]+).*/\\1/p" <<<"$line"
+}
+
+if [[ -n "$last_mb" ]]; then
+  attempted="$(extract_mb_num "$last_mb" "attempted")"
+  pushed="$(extract_mb_num "$last_mb" "pushed")"
+  dropped_full="$(extract_mb_num "$last_mb" "dropped_full")"
+  processed="$(extract_mb_num "$last_mb" "processed")"
+  if [[ -n "$attempted" && "$attempted" -gt 0 ]]; then
+    util_pct="$(awk -v p="$processed" -v a="$attempted" 'BEGIN { printf "%.2f", (p*100.0)/a }')"
+    drop_pct="$(awk -v d="$dropped_full" -v a="$attempted" 'BEGIN { printf "%.2f", (d*100.0)/a }')"
+    echo "mb_processed_over_attempted_pct=$util_pct"
+    echo "mb_drop_over_attempted_pct=$drop_pct"
+  fi
+fi
+
+if [[ -n "$first_mb" && -n "$last_mb" ]]; then
+  first_attempted="$(extract_mb_num "$first_mb" "attempted")"
+  first_processed="$(extract_mb_num "$first_mb" "processed")"
+  last_attempted="$(extract_mb_num "$last_mb" "attempted")"
+  last_processed="$(extract_mb_num "$last_mb" "processed")"
+  if [[ -n "$first_attempted" && -n "$last_attempted" && "$last_attempted" -gt "$first_attempted" ]]; then
+    delta_a=$((last_attempted - first_attempted))
+    delta_p=$((last_processed - first_processed))
+    echo "mb_delta_attempted=$delta_a"
+    echo "mb_delta_processed=$delta_p"
+  fi
 fi
