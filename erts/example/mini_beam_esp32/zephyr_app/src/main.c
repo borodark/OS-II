@@ -32,8 +32,8 @@
 
 LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 
-/* Locked event schema constants (v1). Keep in sync with contract doc. */
-#define OS2_EVENT_SCHEMA_VERSION 1
+/* Locked event schema constants (v2). Keep in sync with contract doc. */
+#define OS2_EVENT_SCHEMA_VERSION 2
 #define OS2_EVENT_STATUS_OK 0
 #define OS2_EVENT_STATUS_IO_ERROR 1
 #define OS2_EVENT_STATUS_BAD_ARGUMENT 2
@@ -68,6 +68,25 @@ LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 #define OS2_PWM_PERIOD_MS 1000U
 #define OS2_PWM_CHANNEL 0U
 #define OS2_PWM_ACTUATOR_ID 1U
+#ifndef OS2_ENABLE_TASK_WDT
+#define OS2_ENABLE_TASK_WDT 1
+#endif
+
+/* Locked board capability schema (v1), encoded as Erlang term text in logs. */
+#define OS2_CAPS_SCHEMA_VERSION 1U
+#define OS2_BOARD_ATOM "arduino_nano_33_ble_sense"
+#define OS2_VM_ATOM "mini_beam"
+#define OS2_SPI_MASTERS 4U
+#define OS2_PWM_CHANNELS 4U
+#define OS2_ADC_CHANNELS 8U
+#define OS2_ADC_MAX_KSPS 200U
+#define OS2_RTC_COUNT 3U
+#define OS2_TIMER32_COUNT 5U
+#define OS2_HAS_QDEC 1U
+#define OS2_HAS_I2S 1U
+#define OS2_HAS_PDM 1U
+#define OS2_HAS_BLE 1U
+#define OS2_HAS_EASYDMA 1U
 
 /* Set >0 to inject a synthetic read failure every Nth sensor read. */
 #ifndef OS2_FAULT_EVERY_N
@@ -117,6 +136,64 @@ static const struct gpio_dt_spec os2_mic_pwr_en =
 #else
 #define OS2_HAS_MIC_PWR_EN 0
 #endif
+
+#if OS2_HAS_VDD_ENV_EN && OS2_HAS_MIC_PWR_EN
+#define OS2_POWER_DOMAINS_ATOMS "[vdd_env,mic_pwr]"
+#elif OS2_HAS_VDD_ENV_EN
+#define OS2_POWER_DOMAINS_ATOMS "[vdd_env]"
+#elif OS2_HAS_MIC_PWR_EN
+#define OS2_POWER_DOMAINS_ATOMS "[mic_pwr]"
+#else
+#define OS2_POWER_DOMAINS_ATOMS "[]"
+#endif
+
+#define OS2_I2C_BUS_COUNT ((uint8_t)(OS2_HAS_I2C0 + OS2_HAS_I2C1))
+
+typedef struct {
+    uint8_t caps_v;
+    const char *board_atom;
+    const char *vm_atom;
+    uint8_t event_schema_v;
+    uint8_t i2c_buses;
+    uint8_t spi_masters;
+    uint8_t pwm_channels;
+    uint8_t adc_channels;
+    uint16_t adc_max_ksps;
+    uint8_t rtc_count;
+    uint8_t timer32_count;
+    uint8_t has_qdec;
+    uint8_t has_i2s;
+    uint8_t has_pdm;
+    uint8_t has_ble;
+    uint8_t has_easydma;
+    uint8_t mailbox_depth;
+    uint32_t wdt_timeout_ms;
+    const char *policy_atom;
+    const char *power_domains_atoms;
+} os2_caps_v1_t;
+
+static const os2_caps_v1_t os2_caps_v1 = {
+    .caps_v = OS2_CAPS_SCHEMA_VERSION,
+    .board_atom = OS2_BOARD_ATOM,
+    .vm_atom = OS2_VM_ATOM,
+    .event_schema_v = OS2_EVENT_SCHEMA_VERSION,
+    .i2c_buses = OS2_I2C_BUS_COUNT,
+    .spi_masters = OS2_SPI_MASTERS,
+    .pwm_channels = OS2_PWM_CHANNELS,
+    .adc_channels = OS2_ADC_CHANNELS,
+    .adc_max_ksps = OS2_ADC_MAX_KSPS,
+    .rtc_count = OS2_RTC_COUNT,
+    .timer32_count = OS2_TIMER32_COUNT,
+    .has_qdec = OS2_HAS_QDEC,
+    .has_i2s = OS2_HAS_I2S,
+    .has_pdm = OS2_HAS_PDM,
+    .has_ble = OS2_HAS_BLE,
+    .has_easydma = OS2_HAS_EASYDMA,
+    .mailbox_depth = MB_MAILBOX_CAPACITY,
+    .wdt_timeout_ms = OS2_WDT_TIMEOUT_MS,
+    .policy_atom = "reject_new",
+    .power_domains_atoms = OS2_POWER_DOMAINS_ATOMS,
+};
 
 typedef struct {
     const char *name;
@@ -540,6 +617,30 @@ static uint8_t os2_should_withhold_wdt_feed(const os2_sensor_runtime_t *runtimes
     return 0U;
 }
 
+static void os2_log_caps_v1(void) {
+    LOG_INF("os2_caps_v1 #{caps_v=>%u,board=>%s,vm=>%s,event_schema=>%u,mailbox_depth=>%u,i2c=>%u,spi=>%u,pwm=>%u,adc=>#{channels=>%u,max_ksps=>%u},rtc=>%u,timers32=>%u,qdec=>%u,i2s=>%u,pdm=>%u,ble=>%u,easydma=>%u,policy=>%s,power_domains=>%s,wdt_ms=>%u}",
+        os2_caps_v1.caps_v,
+        os2_caps_v1.board_atom,
+        os2_caps_v1.vm_atom,
+        os2_caps_v1.event_schema_v,
+        os2_caps_v1.mailbox_depth,
+        os2_caps_v1.i2c_buses,
+        os2_caps_v1.spi_masters,
+        os2_caps_v1.pwm_channels,
+        os2_caps_v1.adc_channels,
+        os2_caps_v1.adc_max_ksps,
+        os2_caps_v1.rtc_count,
+        os2_caps_v1.timer32_count,
+        os2_caps_v1.has_qdec,
+        os2_caps_v1.has_i2s,
+        os2_caps_v1.has_pdm,
+        os2_caps_v1.has_ble,
+        os2_caps_v1.has_easydma,
+        os2_caps_v1.policy_atom,
+        os2_caps_v1.power_domains_atoms,
+        os2_caps_v1.wdt_timeout_ms);
+}
+
 int main(void) {
     mb_vm_t vm;
     int rc;
@@ -579,10 +680,12 @@ int main(void) {
 
     LOG_INF("mini_beam_nrf52 start");
     LOG_INF("event schema v%d", OS2_EVENT_SCHEMA_VERSION);
+    os2_log_caps_v1();
     boot_counter = os2_boot_counter_next();
     LOG_INF("boot counter=%u resetreas=0x%08x", (unsigned)boot_counter, resetreas_raw);
     NRF_POWER->RESETREAS = resetreas_raw;
 
+#if OS2_ENABLE_TASK_WDT
     wdt_channel = os2_task_wdt_start();
     if (wdt_channel < 0) {
         LOG_ERR("task_wdt init failed rc=%d", wdt_channel);
@@ -590,6 +693,9 @@ int main(void) {
     }
     LOG_INF("task_wdt enabled timeout_ms=%u grace_ms=%u",
         OS2_WDT_TIMEOUT_MS, OS2_WDT_DEGRADED_GRACE_MS);
+#else
+    LOG_WRN("task_wdt disabled via OS2_ENABLE_TASK_WDT=0");
+#endif
 
     os2_try_enable_i2c_pullups();
     k_msleep(5);
@@ -652,6 +758,7 @@ int main(void) {
                 const char *name = "unknown";
                 int32_t status = OS2_EVENT_STATUS_OK;
                 int32_t event_value = vm.regs[OS2_REG_VALUE];
+                int32_t op_rc = 0;
                 uint8_t sensor_id = (uint8_t)vm.regs[OS2_REG_SENSOR_ID];
                 uint8_t injected_fault = 0;
                 os2_sensor_runtime_t *event_rt = NULL;
@@ -679,6 +786,7 @@ int main(void) {
 #endif
 
                 if (event_value < 0) {
+                    op_rc = event_value;
                     status = OS2_EVENT_STATUS_IO_ERROR;
                     if (event_value == -22) {
                         status = OS2_EVENT_STATUS_BAD_ARGUMENT;
@@ -708,13 +816,14 @@ int main(void) {
                     event_rt->degraded_since_ms = 0;
                 }
 
-                LOG_INF("event sensor_id=%d name=%s bus=%d addr=0x%02x reg=0x%02x value=%d ts=%u status=%d inj=%u",
+                LOG_INF("event kind=sensor op=i2c_read sensor_id=%d name=%s bus=%d addr=0x%02x reg=0x%02x value=%d rc=%d ts=%u status=%d inj=%u",
                     sensor_id,
                     name,
                     vm.regs[OS2_REG_EVT_BUS],
                     vm.regs[OS2_REG_EVT_ADDR],
                     vm.regs[OS2_REG_EVT_REG],
                     event_value,
+                    op_rc,
                     (uint32_t)vm.regs[OS2_REG_TS],
                     status,
                     injected_fault);
@@ -723,12 +832,15 @@ int main(void) {
                 mb_stats.processed++;
             } else if (vm.regs[OS2_REG_EVENT_MARK] == MB_CMD_PWM_SET_DUTY &&
                        (uint32_t)vm.regs[OS2_REG_TS] != last_ts) {
+                int32_t op_rc = vm.regs[OS2_REG_VALUE];
                 int32_t status = (vm.regs[OS2_REG_VALUE] < 0) ? OS2_EVENT_STATUS_IO_ERROR : OS2_EVENT_STATUS_OK;
-                LOG_INF("actuator_event actuator_id=%d type=pwm_set_duty channel=%d duty_permille=%d value=%d ts=%u status=%d",
+                LOG_INF("event kind=actuator op=pwm_set_duty actuator_id=%d sensor_id=%d channel=%d duty_permille=%d value=%d rc=%d ts=%u status=%d inj=0",
+                    vm.regs[OS2_REG_SENSOR_ID],
                     vm.regs[OS2_REG_SENSOR_ID],
                     vm.regs[OS2_REG_EVT_BUS],
                     vm.regs[OS2_REG_EVT_ADDR],
                     vm.regs[OS2_REG_VALUE],
+                    op_rc,
                     (uint32_t)vm.regs[OS2_REG_TS],
                     status);
                 last_ts = (uint32_t)vm.regs[OS2_REG_TS];
@@ -746,6 +858,7 @@ int main(void) {
                 (unsigned)MB_MAILBOX_CAPACITY);
             last_stats_ts = last_ts;
         }
+#if OS2_ENABLE_TASK_WDT
         if (os2_should_withhold_wdt_feed(runtimes, target_count, k_uptime_get_32())) {
             if (!wdt_feed_blocked) {
                 LOG_ERR("sensor degraded beyond grace; withholding task_wdt feed for recovery reboot");
@@ -758,6 +871,7 @@ int main(void) {
             }
             wdt_feed_blocked = 0;
         }
+#endif
         k_msleep(200);
     }
 

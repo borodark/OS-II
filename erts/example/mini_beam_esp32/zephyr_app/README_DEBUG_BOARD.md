@@ -88,6 +88,11 @@ switch to SWD flashing/debug (next section).
 Nano 33 BLE/Sense re-enumerates USB during reset/flash. The recreated
 `/dev/ttyACM0` can come back with different ownership and block tools.
 
+Background:
+- `/dev/ttyACM*` nodes are created by kernel `devtmpfs` (typically root-owned).
+- `udev` rules then apply final owner/group/mode.
+- So the persistent fix is a local `udev` rule in `/etc/udev/rules.d/`.
+
 Quick workaround (per reconnect/reset):
 ```bash
 sudo chown io:io /dev/ttyACM0
@@ -95,22 +100,30 @@ sudo chown io:io /dev/ttyACM0
 
 Recommended persistent fix (udev rule):
 ```bash
-sudo tee /etc/udev/rules.d/99-arduino-nano33ble.rules >/dev/null <<'EOF'
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="005a", MODE="0660", GROUP="dialout", TAG+="uaccess"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="015a", MODE="0660", GROUP="dialout", TAG+="uaccess"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="025a", MODE="0660", GROUP="dialout", TAG+="uaccess"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="805a", MODE="0660", GROUP="dialout", TAG+="uaccess"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="0100", MODE="0660", GROUP="dialout", TAG+="uaccess"
+sudo tee /etc/udev/rules.d/99-nano33-tty.rules >/dev/null <<'EOF'
+# Option A (single-user dev machine): force io:io ownership
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="005a", OWNER="io", GROUP="io", MODE="0660", SYMLINK+="nano33"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="0100", OWNER="io", GROUP="io", MODE="0660", SYMLINK+="nano33"
 EOF
 
 sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo udevadm trigger --subsystem-match=tty
+```
+
+Multi-user alternative (recommended if multiple users share this host):
+```bash
+sudo tee /etc/udev/rules.d/99-nano33-tty.rules >/dev/null <<'EOF'
+# Option B (shared machine): use dialout ACL model
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="005a", GROUP="dialout", MODE="0660", TAG+="uaccess", SYMLINK+="nano33"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="0100", GROUP="dialout", MODE="0660", TAG+="uaccess", SYMLINK+="nano33"
+EOF
 ```
 
 Verify after reconnect:
 ```bash
-ls -l /dev/ttyACM0
+ls -l /dev/ttyACM0 /dev/nano33
 id -nG
+udevadm info -a -n /dev/ttyACM0 | rg "idVendor|idProduct" -n
 ```
 
 ### SWD Fallback (Recommended when USB flashing is unstable)

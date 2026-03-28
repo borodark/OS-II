@@ -12,8 +12,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="/dev/ttyACM0"
 LOG_FILE="$SCRIPT_DIR/logs/nano33.log"
+PROFILE_FILE="$SCRIPT_DIR/profiles/nano33_ble_sense.os2"
 SUDO_CHOWN=0
 WAIT_SECS=8
+SKIP_PREFLIGHT=0
+PREFLIGHT_CAPTURE_SECS=12
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,12 +28,24 @@ while [[ $# -gt 0 ]]; do
       LOG_FILE="${2:?missing value for --log}"
       shift 2
       ;;
+    --profile)
+      PROFILE_FILE="${2:?missing value for --profile}"
+      shift 2
+      ;;
     --sudo-chown)
       SUDO_CHOWN=1
       shift
       ;;
     --wait-secs)
       WAIT_SECS="${2:?missing value for --wait-secs}"
+      shift 2
+      ;;
+    --skip-preflight)
+      SKIP_PREFLIGHT=1
+      shift
+      ;;
+    --preflight-capture-secs)
+      PREFLIGHT_CAPTURE_SECS="${2:?missing value for --preflight-capture-secs}"
       shift 2
       ;;
     *)
@@ -54,6 +69,21 @@ for _ in $(seq 1 "$WAIT_SECS"); do
   [[ -e "$PORT" ]] && break
   sleep 1
 done
+
+if [[ "$SKIP_PREFLIGHT" -eq 1 ]]; then
+  echo "[preflight] skipped (--skip-preflight)"
+else
+  echo "[preflight] validate board caps/profile before logger start"
+  PREFLIGHT_ARGS=(--profile "$PROFILE_FILE" --port "$PORT" --capture-secs "$PREFLIGHT_CAPTURE_SECS")
+  if [[ "$SUDO_CHOWN" -eq 1 ]]; then
+    PREFLIGHT_ARGS+=(--sudo-chown)
+  fi
+  if ! "$SCRIPT_DIR/preflight_profile_check.sh" "${PREFLIGHT_ARGS[@]}"; then
+    echo "error: preflight failed; refusing to start long logger session." >&2
+    echo "fix profile/caps mismatch or pass --skip-preflight to override." >&2
+    exit 1
+  fi
+fi
 
 echo "[2/2] Start serial logger"
 LOGGER_ARGS=(--port "$PORT" --log "$LOG_FILE")

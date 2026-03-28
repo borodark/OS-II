@@ -1,0 +1,15 @@
+# P0/P1 Proof Bundle (2026-02-25)
+
+## Boot Excerpt
+7:[00:00:02.402,008] <inf> mini_beam_nrf52: mini_beam_nrf52 start
+9:[00:00:02.402,038] <inf> mini_beam_nrf52: event schema v2
+11:[00:00:02.402,282] <inf> mini_beam_nrf52: os2_caps_v1 #{caps_v=>1,board=>arduino_nano_33_ble_sense,vm=>mini_beam,event_schema=>2,mailbox_depth=>32,i2c=>2,spi=>4,pwm=>4,adc=>#{channels=>8,max_ksps=>200},rtc=>3,timers32=>5,qdec=>1,i2s=>1,pdm=>1,ble=>1,easydma=>1,policy=>reject_new,power_domains=>[vdd_env,mic_pwr],wdt_ms=>6000}
+31:[00:00:00.500,762] <inf> mini_beam_nrf52: mini_beam_nrf52 start
+33:[00:00:00.500,793] <inf> mini_beam_nrf52: event schema v2
+35:[00:00:00.501,037] <inf> mini_beam_nrf52: os2_caps_v1 #{caps_v=>1,board=>arduino_nano_33_ble_sense,vm=>mini_beam,event_schema=>2,mailbox_depth=>32,i2c=>2,spi=>4,pwm=>4,adc=>#{channels=>8,max_ksps=>200},rtc=>3,timers32=>5,qdec=>1,i2s=>1,pdm=>1,ble=>1,easydma=>1,policy=>reject_new,power_domains=>[vdd_env,mic_pwr],wdt_ms=>6000}
+
+## Validator Output
+PASS: os2_caps_v1 term found and validated
+[00:00:02.402,282] <inf> mini_beam_nrf52: os2_caps_v1 #{caps_v=>1,board=>arduino_nano_33_ble_sense,vm=>mini_beam,event_schema=>2,mailbox_depth=>32,i2c=>2,spi=>4,pwm=>4,adc=>#{channels=>8,max_ksps=>200},rtc=>3,timers32=>5,qdec=>1,i2s=>1,pdm=>1,ble=>1,easydma=>1,policy=>reject_new,power_domains=>[vdd_env,mic_pwr],wdt_ms=>6000}
+PASS: profile 'profiles/nano33_ble_sense.os2' is compatible with caps in 'logs/nano33.log'
+binding_table: board=arduino_nano_33_ble_sense vm=mini_beam policy=reject_new i2c_bus=1 pwm_channel=0 sensor_addr=0x39 sensor_reg=0x92 pwm_freq_hz=20000

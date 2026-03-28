@@ -130,6 +130,8 @@ export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bos
 - story draft: `system/doc/README_GITHUB_STORY.md`
 - contributor call: `system/doc/CALL_FOR_CONTRIBUTIONS.md`
 - MSc/PhD framing: `system/doc/RESEARCH_PLAN_MSC_PHD.md`
+- capability DSL track: `system/doc/OS2_CAPABILITY_DSL_PLAN.md`
+- 10-minute pamphlet: `system/doc/HARDWARE_DSL_PAMPHLET_10_MIN.md`
 
 ## Roadmap (M0–M6)
 

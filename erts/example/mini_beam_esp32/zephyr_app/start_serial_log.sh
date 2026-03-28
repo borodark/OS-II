@@ -15,6 +15,8 @@ PORT="/dev/ttyACM0"
 BAUD="115200"
 LOG_FILE="logs/nano33.log"
 SUDO_CHOWN=0
+BACKEND="${SERIAL_BACKEND:-auto}"
+RECONNECT_SLEEP_SEC="${RECONNECT_SLEEP_SEC:-0.2}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,6 +35,10 @@ while [[ $# -gt 0 ]]; do
     --sudo-chown)
       SUDO_CHOWN=1
       shift
+      ;;
+    --backend)
+      BACKEND="${2:?missing value for --backend}"
+      shift 2
       ;;
     *)
       echo "unknown argument: $1" >&2
@@ -68,6 +74,35 @@ ensure_port_access() {
 log_line "serial logger starting: port=$PORT baud=$BAUD log=$LOG_FILE"
 log_line "tip: tail -n +1 -F $LOG_FILE --sleep-interval=0.1"
 
+resolve_backend() {
+  case "$BACKEND" in
+    auto)
+      # picocom is suitable for interactive TTY sessions; in non-interactive
+      # soak runs prefer cat to avoid immediate picocom exit loops.
+      if command -v picocom >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; then
+        echo "picocom"
+      else
+        echo "cat"
+      fi
+      ;;
+    picocom|cat)
+      echo "$BACKEND"
+      ;;
+    *)
+      echo "error: unsupported backend '$BACKEND' (use auto|picocom|cat)" >&2
+      exit 2
+      ;;
+  esac
+}
+
+SER_BACKEND="$(resolve_backend)"
+if [[ "$SER_BACKEND" == "picocom" ]]; then
+  if [[ "${RECONNECT_SLEEP_SEC}" == "0.2" ]]; then
+    RECONNECT_SLEEP_SEC="1.0"
+  fi
+fi
+log_line "backend=$SER_BACKEND"
+
 while [[ "$running" -eq 1 ]]; do
   if [[ ! -e "$PORT" ]]; then
     sleep 0.2
@@ -88,13 +123,23 @@ while [[ "$running" -eq 1 ]]; do
 
   log_line "connected: $PORT"
 
-  # cat exits on disconnect/reset; loop will reconnect.
-  if ! cat "$PORT" | stdbuf -oL -eL tee -a "$LOG_FILE" >/dev/null; then
-    :
+  # Keep backend one-shot: when device disconnects/reset happens,
+  # process exits and outer loop reconnects.
+  if [[ "$SER_BACKEND" == "picocom" ]]; then
+    # picocom asserts modem control lines more reliably on CDC ACM links.
+    # Use noinit/noreset to reduce line toggles on reconnect loops.
+    if ! stdbuf -oL -eL picocom -q --noinit --noreset --nolock -b "$BAUD" "$PORT" 2>/dev/null \
+      | stdbuf -oL -eL tee -a "$LOG_FILE" >/dev/null; then
+      :
+    fi
+  else
+    if ! cat "$PORT" | stdbuf -oL -eL tee -a "$LOG_FILE" >/dev/null; then
+      :
+    fi
   fi
 
   log_line "disconnected: $PORT (reconnecting...)"
-  sleep 0.2
+  sleep "$RECONNECT_SLEEP_SEC"
 done
 
 log_line "serial logger stopped"

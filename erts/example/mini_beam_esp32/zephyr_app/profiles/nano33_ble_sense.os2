@@ -1,0 +1,26 @@
+# OS/II profile for Arduino Nano 33 BLE Sense (nRF52840)
+# Format: key=value
+
+profile_v=1
+profile_name=nano33_ble_sense
+board=arduino_nano_33_ble_sense
+
+require.vm=mini_beam
+require.event_schema=2
+require.policy=reject_new
+require.i2c_min=2
+require.pwm_min=4
+require.mailbox_depth_min=8
+require.adc_channels_min=8
+require.ble=1
+require.i2s=1
+require.pdm=1
+require.qdec=1
+
+# Logical bindings used by the current runtime path.
+bind.sensor_bus=1
+bind.sensor_addr=0x39
+bind.sensor_reg=0x92
+bind.pwm_channel=0
+bind.pwm_freq_hz=20000
+bind.power_domains=vdd_env,mic_pwr
