@@ -17,9 +17,11 @@ else()
   set(MB_HAL_SRC src/mb_hal_stub.c)
 endif()
 
+set(MB_CORE_SRCS src/mb_vm.c src/mb_scheduler.c src/mb_heap.c)
+
 add_executable(mini_beam_host
   src/main_host.c
-  src/mb_vm.c
+  ${MB_CORE_SRCS}
   ${MB_HAL_SRC}
 )
 
@@ -29,7 +31,7 @@ target_compile_options(mini_beam_host PRIVATE -Wall -Wextra -Werror)
 
 add_executable(mini_beam_host_mailbox
   src/main_mailbox_host.c
-  src/mb_vm.c
+  ${MB_CORE_SRCS}
   ${MB_HAL_SRC}
 )
 
@@ -38,9 +40,27 @@ target_compile_options(mini_beam_host_mailbox PRIVATE -Wall -Wextra -Werror)
 
 add_executable(mini_beam_host_regression
   src/main_regression_host.c
-  src/mb_vm.c
+  ${MB_CORE_SRCS}
   src/mb_hal_stub.c
 )
 
 target_include_directories(mini_beam_host_regression PRIVATE include)
 target_compile_options(mini_beam_host_regression PRIVATE -Wall -Wextra -Werror)
+
+add_executable(mini_beam_host_multiproc
+  src/main_multiproc_host.c
+  ${MB_CORE_SRCS}
+  src/mb_hal_stub.c
+)
+
+target_include_directories(mini_beam_host_multiproc PRIVATE include)
+target_compile_options(mini_beam_host_multiproc PRIVATE -Wall -Wextra -Werror)
+
+add_executable(mini_beam_host_stability
+  src/main_stability_host.c
+  ${MB_CORE_SRCS}
+  src/mb_hal_stub.c
+)
+
+target_include_directories(mini_beam_host_stability PRIVATE include)
+target_compile_options(mini_beam_host_stability PRIVATE -Wall -Wextra -Werror)

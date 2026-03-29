@@ -5,6 +5,8 @@ project(mini_beam_nrf52)
 target_sources(app PRIVATE
   src/main.c
   ../src/mb_vm.c
+  ../src/mb_scheduler.c
+  ../src/mb_heap.c
   ../src/mb_hal_nrf52.c
 )
 

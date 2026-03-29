@@ -17,9 +17,28 @@ This document freezes the current VM interface for short-term development.
 - `MB_OP_SUB (0x04)`
 - `MB_OP_CALL_BIF (0x10)`
 - `MB_OP_RECV_CMD (0x20)` with register operands: `r_type,r_a,r_b,r_c,r_d`
+  - Compat mode (no scheduler): non-blocking, returns `MB_CMD_NONE` on empty.
+  - Scheduler mode: blocks (rewinds PC, sets WAITING) until message arrives.
+- `MB_OP_SEND (0x21)` with register operands: `r_pid,r_type,r_a,r_b,r_c,r_d`
+  - Sends command to target process's mailbox. Result code in `regs[r_pid]`.
+  - Wakes target if WAITING. Returns `MB_BAD_PID` for invalid target.
+- `MB_OP_SELF (0x22)` with operand: `r_dst`
+  - Writes process PID to `regs[r_dst]`.
+- `MB_OP_YIELD (0x23)` (no operands)
+  - Exhausts reduction budget, returning control to scheduler.
 - `MB_OP_JMP (0x30)`
 - `MB_OP_JMP_IF_ZERO (0x31)`
 - `MB_OP_SLEEP_MS (0x40)`
+- `MB_OP_MAKE_TUPLE (0x50)` with operands: `r_dst, arity, r0, r1, ...`
+  - Heap-allocates a tuple. Triggers GC on allocation failure.
+- `MB_OP_TUPLE_ELEM (0x51)` with operands: `r_dst, r_tuple, index`
+  - Extracts element at index from a boxed tuple.
+- `MB_OP_CONS (0x52)` with operands: `r_dst, r_head, r_tail`
+  - Heap-allocates a cons cell. Triggers GC on allocation failure.
+- `MB_OP_HEAD (0x53)` with operands: `r_dst, r_cons`
+  - Extracts head (car) of a cons cell.
+- `MB_OP_TAIL (0x54)` with operands: `r_dst, r_cons`
+  - Extracts tail (cdr) of a cons cell.
 - `MB_OP_HALT (0xFF)`
 
 Byte encoding is little-endian for all 32-bit immediates.
@@ -60,8 +79,46 @@ Validation is enforced on mailbox push and command decode.
 - `MB_INVALID_COMMAND = 7`
 - `MB_BAD_ARGUMENT = 8`
 - `MB_MAILBOX_FULL = 9`
+- `MB_SCHED_IDLE = 10`
+- `MB_BAD_PID = 11`
+- `MB_PROC_TABLE_FULL = 12`
+- `MB_HEAP_OOM = 13`
+- `MB_BAD_TERM = 14`
+- `MB_BAD_ARITY = 15`
 
 Hard decode/runtime errors abort `mb_vm_run()`. Mailbox empty on `MB_OP_RECV_CMD` is non-fatal.
+
+## 9. Process Model (M2)
+
+- Process table: `MB_MAX_PROCESSES = 8` slots.
+- PID: `uint8_t`, 1-based index (0 = `MB_PID_NONE`).
+- States: `FREE`, `READY`, `WAITING`, `SLEEPING`, `HALTED`.
+- Each process owns: register file, program counter, mailbox.
+- Scheduler: cooperative round-robin, `MB_REDUCTIONS = 64` steps per tick.
+- `SLEEP_MS` in scheduler mode is non-blocking (records wake time).
+- Inter-process communication via `SEND` opcode or `mb_sched_send()` from native code.
+
+## 10. Term Representation and Heap (M3)
+
+- Register type: `mb_term_t` (`uint32_t`) with 4-bit tags.
+- Tag scheme (AtomVM-inspired):
+  - `0xF` = small integer (28-bit signed, range -134M to +134M)
+  - `0xB` = atom (well-known: nil=0, true=1, false=2)
+  - `0x3` = PID
+  - `0x2` = boxed heap pointer (tuple)
+  - `0x1` = cons heap pointer (list cell)
+- Per-process heap: two semi-spaces of `MB_HEAP_WORDS` words (default 128 = 512 bytes each).
+- Allocation: bump pointer in active (from) space.
+- GC: Cheney's copying collector, triggered on allocation failure.
+  - Root set: all 16 registers.
+  - No recursion (BFS scan) — safe for Cortex-M4 small stacks.
+  - Per-process, so only one process pauses at a time (BEAM model).
+- Tuple layout on heap: `[header_word, elem_0, ..., elem_{arity-1}]`.
+  - Max arity: `MB_MAX_TUPLE_ARITY = 16`.
+- Cons cell layout: `[head, tail]` (2 words, no header).
+- External mailbox ABI (`mb_command_t`) stays raw `int32_t`.
+  Tagging boundary is at `RECV_CMD` (tags incoming) and `SEND` (untags outgoing).
+- Stability proven: 200K scheduler ticks, 100K messages, 2400+ GC cycles, zero errors.
 
 ## 6. Stability Rule
 

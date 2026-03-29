@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "mb_errors.h"
+#include "mb_process.h"
 #include "mb_types.h"
 
 typedef enum {
@@ -35,9 +36,17 @@ typedef enum {
     MB_OP_SUB = 0x04,
     MB_OP_CALL_BIF = 0x10,
     MB_OP_RECV_CMD = 0x20,
+    MB_OP_SEND = 0x21,
+    MB_OP_SELF = 0x22,
+    MB_OP_YIELD = 0x23,
     MB_OP_JMP = 0x30,
     MB_OP_JMP_IF_ZERO = 0x31,
     MB_OP_SLEEP_MS = 0x40,
+    MB_OP_MAKE_TUPLE = 0x50,
+    MB_OP_TUPLE_ELEM = 0x51,
+    MB_OP_CONS = 0x52,
+    MB_OP_HEAD = 0x53,
+    MB_OP_TAIL = 0x54,
     MB_OP_HALT = 0xFF
 } mb_opcode_t;
 
@@ -45,7 +54,7 @@ typedef struct {
     const uint8_t *program;
     size_t program_size;
     size_t pc;
-    int32_t regs[MB_REG_COUNT];
+    mb_term_t regs[MB_REG_COUNT];
     mb_mailbox_t mailbox;
     int halted;
     int last_error;
