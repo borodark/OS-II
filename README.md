@@ -1,166 +1,192 @@
-# OS/II Runtime Research
+# OS/II
 
-Deterministic, BEAM-inspired embedded runtime research for microcontrollers.
+BEAM-inspired embedded runtime for microcontrollers.
 
-This repo contains the active OS/II prototype:
-- `OS/II` mini VM runtime for MCU orchestration
-- Zephyr hardware path for `nRF52840` boards
-- validated bring-up on Arduino Nano 33 BLE Sense sensors
+Write a sensor-to-actuator flow as an Erlang term.  The flow compiler
+generates bytecode.  The scheduler runs it on a 64MHz Cortex-M4 with
+256KB RAM, <3% CPU overhead, 995 real I2C events per second.
 
-
-## why
-
-The Nordic Semiconductor nRF52840 SoC, featuring a 64 MHz ARM Cortex-M4 with a Floating Point Unit (FPU), 1MB Flash, and 256KB RAM, provides computing power that is significantly higher than typical mid-90s consumer PCs in terms of raw CPU efficiency, despite having far less memory and storage. [1, 2, 3, 4, 5].
-
-It is best compared to a high-end 1994–1995 desktop PC, such as a Compaq Presario running an Intel DX4-100 or an early 60MHz/66MHz Pentium processor. [6, 7, 8]  almost without RAM, 256KB must be plenty.
-
-### Performance Comparison Points
-
-• CPU Speed (64 MHz Cortex-M4 vs. 66 MHz Pentium/100 MHz 486): The Cortex-M4 architecture is vastly more efficient per clock cycle than 90s processors. While the clock speed (64 MHz) matches a mid-90s Pentium, the CoreMark benchmark score (roughly 215 CoreMark) means the nRF52840 handles math and logic operations more like a slightly faster Pentium.
-
-• Floating Point Unit (FPU): The nRF52840 includes a hardware FPU. In the early 90s, this was a premium feature (like a 486DX vs 486SX) or required a dedicated math coprocessor, making the nRF52840's floating-point performance superior to standard 1990–1993 486 machines.
-
-• RAM (256 KB vs. 4 MB–8 MB): This is the main difference. A 90s PC needed massive RAM to load Windows 3.1/95. The nRF52840 is an embedded system, meaning 256KB of RAM is generous for its tasks, but it is vastly lower than the megabytes used in 1995. So its almost without RAM
-
-• Compute Density: The nRF52840 fits a processor, radio (Bluetooth 5), and memory into a single chip smaller than a fingernail, whereas a 90s computer required a motherboard, multiple cards, and a large power supply to achieve similar raw CPU throughput. [1, 9, 10, 11, 12]
-
-Summary: For raw, specialized, and efficient calculation (especially floating-point), the nRF52840 is roughly comparable to a 1994 Compaq Deskpro with a 66MHz Intel Pentium. [2, 11, 13] almost without RAM
-
-
-_AI responses may include mistakes.__
-
-[1] https://www.nordicsemi.com/Products/nRF52840
-[2] http://files.pine64.org/doc/datasheet/pinetime/nRF52840%20product%20brief.pdf
-[3] https://www.ultralibrarian.com/2026/1/9/nrf52840-datasheet-explained/
-[4] https://www.nordicsemi.com/Nordic-news/2018/11/nRF52840-is-one-of-the-first-devices-to-support-Bluetooth-LE-with-Amazon-FreeRTOS
-[5] https://www.digikey.com/en/product-highlight/n/nordic-semi/nrf52840-multi-protocol-soc
-[6] https://www.vogons.org/viewtopic.php?t=54682
-[7] https://www.vogons.org/viewtopic.php?t=75199
-[8] https://en.wikipedia.org/wiki/Pentium_(original)
-[9] https://www.reddit.com/r/digitalfoundry/comments/1m88nav/how_much_more_powerful_are_modern_pcs_than_early/
-[10] https://forum.seeedstudio.com/t/nrf52840-product-specification-v1-7-revision-history-november-2021/273218
-[11] https://www.ultralibrarian.com/2026/1/9/nrf52840-datasheet-explained/
-[12] https://www.ic-components.com/blog/Comparing-NRF5340-and-NRF52840-Bluetooth-LE,and-NFC.jsp
-[13] https://www.mouser.com/datasheet/2/297/nrf52840_soc_v3_0-2942478.pdf
-
-
-
-
-## Project Focus
-
-`OS/II` tests a constrained model:
-- VM (register interpreter) handles orchestration/state policy
-- Native drivers handle timing-sensitive peripheral operations
-- Bounded mailbox command ABI connects both sides
-
-Current scope is intentionally restricted:
-- no distributed Erlang
-- no hot code loading
-- no dynamic NIF loading
-- no JIT
-
-## Hardware-Proven Status
-
-On Nano 33 BLE Sense we have verified:
-- USB flash/boot/console loop
-- sensor rail and I2C pull-up enable
-- onboard sensor detection on internal bus
-- VM-mediated cyclic sensor reads
-
-Example runtime signals:
-```text
-i2c bus1 probe APDS9960 addr=0x39 reg=0x92 val=0xab
-i2c bus1 probe HTS221 addr=0x5f reg=0x0f val=0xbc
-i2c bus1 probe LPS22HB addr=0x5c reg=0x0f val=0xb1
-sensor detected: APDS9960 on bus1
+```erlang
+#{sensors => [
+    #{bus => 1, addr => 16#39, reg => 16#92, poll_ms => 200}
+  ],
+  actuators => [
+    #{kind => pwm, channel => 0}
+  ],
+  flows => [
+    #{from => 16#39, to => {pwm, 0}}
+  ],
+  policy => #{
+    mailbox_depth => 32,
+    watchdog_ms => 6000,
+    on_fail => stop_actuator
+  }
+}.
 ```
 
-## Quickstart (Sense)
-
-Requirements:
-- Zephyr workspace (any path)
-- Arduino `bossac` installed at `~/.arduino15/.../bossac`
-- board connected on `/dev/ttyACM0`
-
-Run build + flash + monitor:
-```bash
-export ZEPHYR_WS="$HOME/zephyrproject"
-env CCACHE_DISABLE=1 XDG_CACHE_HOME=/tmp/zephyr-cache \
-  ./erts/example/mini_beam_esp32/zephyr_app/reflash_nano33_sense.sh --monitor
+```
+$ escript tools/flow_compile.escript flows/nano33_sensor_pwm.flow flow_generated.h
+flow_compile: flows/nano33_sensor_pwm.flow -> flow_generated.h
+  sensor 1: 73 bytes
+  actuator: 17 bytes
+  processes: 2
 ```
 
-## Bootstrap From Fresh Clone
+The compiler emits two bytecode programs.  The sensor process reads
+I2C and SENDs to the actuator process, which calls PWM.  Both run
+under a cooperative scheduler with per-process heaps and GC.
 
-Create a Zephyr workspace + venv and install west dependencies:
-```bash
-./erts/example/mini_beam_esp32/zephyr_app/bootstrap_zephyr_workspace.sh "$HOME/zephyrproject"
-```
+## Why
 
-Then build/flash:
+The nRF52840 runs at 64MHz with 256KB RAM.  That is roughly a 1994
+Pentium in per-clock efficiency, minus the RAM.  BEAM's per-process
+isolation (own registers, own heap, own mailbox) fits this constraint
+naturally: each process is ~1.7KB, the scheduler is a round-robin scan,
+and Cheney's copying GC runs without recursion on a small stack.
+
+OS/II tests whether BEAM's model scales down to this level — and the
+answer is yes.
+
+## Quickstart
+
+Requirements: Zephyr SDK, Arduino `bossac`, board on `/dev/ttyACM0`.
+
 ```bash
-source "$HOME/zephyrproject/.venv/bin/activate"
-export ZEPHYR_WS="$HOME/zephyrproject"
-export BOSSAC="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bossac"
+# bootstrap (first time)
+./erts/example/mini_beam_esp32/zephyr_app/bootstrap_zephyr_workspace.sh ~/zephyrproject
+
+# compile flow -> bytecode header
+escript erts/example/mini_beam_esp32/tools/flow_compile.escript \
+  erts/example/mini_beam_esp32/flows/nano33_sensor_pwm.flow \
+  erts/example/mini_beam_esp32/zephyr_app/src/flow_generated.h
+
+# build + flash + monitor
+source ~/zephyrproject/.venv/bin/activate
+export ZEPHYR_WS=~/zephyrproject
 ./erts/example/mini_beam_esp32/zephyr_app/reflash_nano33_sense.sh --monitor
 ```
 
-## Key Paths
+Expected output:
+```
+i2c bus1 probe APDS9960 addr=0x39 reg=0x92 val=0xab
+i2c bus1 probe HTS221 addr=0x5f reg=0x0f val=0xbc
+flow: sensor pid=1 (73 bytes) actuator pid=2 (17 bytes)
+event sensor=57:146 value=171 ts=3055 status=0 | actuator r0=2 r2=171
+event sensor=57:146 value=171 ts=3255 status=0 | actuator r0=2 r2=171
+```
 
-- mini VM + HAL:
-  - `erts/example/mini_beam_esp32/include`
-  - `erts/example/mini_beam_esp32/src`
-- Zephyr app:
-  - `erts/example/mini_beam_esp32/zephyr_app`
-- architecture and plan docs:
-  - `system/doc/os2_architecture.md`
-  - `system/doc/os2_architecture_diagram.md`
-  - `system/doc/os2_architecture_ascii.md`
-  - `system/doc/mini_beam_design_decisions.md`
-  - `system/doc/mini_beam_esp32_plan.md`
+## Host Tests (no hardware needed)
+
+```bash
+cd erts/example/mini_beam_esp32
+mkdir -p build && cd build && cmake .. && make -j$(nproc)
+./mini_beam_host_regression    # VM + scheduler + term/heap/GC tests
+./mini_beam_host_multiproc     # two-process I2C-to-PWM proof
+./mini_beam_host_stability     # 200K ticks, 100K messages, 2438 GC cycles
+./mini_beam_host_flow          # flow-compiled bytecode verification
+```
 
 ## Architecture
 
-- Rendered SVG: `system/doc/os2_architecture.svg`
-- Mermaid diagram: `system/doc/os2_architecture_diagram.md`
-- ASCII fallback: `system/doc/os2_architecture_ascii.md`
-- Detailed write-up: `system/doc/os2_architecture.md`
+```
+ .flow file (Erlang term)
+       |
+  flow_compile.escript        host: parse + validate + emit bytecode
+       |
+  flow_generated.h            C header with byte arrays
+       |
+  Zephyr firmware             boots, spawns processes via scheduler
+       |
+  +-----------+    SEND     +-----------+
+  | sensor    | ----------> | actuator  |
+  | process   |   mailbox   | process   |
+  | (I2C BIF) |             | (PWM BIF) |
+  +-----------+             +-----------+
+       |                         |
+  mb_scheduler_t             round-robin, 64 reductions/tick
+       |
+  mb_process_t               registers (tagged terms), heap, GC
+       |
+  mb_hal_nrf52.c             GPIO, PWM, I2C, monotonic time
+```
 
-## Publish Drafts
+## What's Inside
 
-- story draft: `system/doc/README_GITHUB_STORY.md`
-- contributor call: `system/doc/CALL_FOR_CONTRIBUTIONS.md`
-- MSc/PhD framing: `system/doc/RESEARCH_PLAN_MSC_PHD.md`
-- capability DSL track: `system/doc/OS2_CAPABILITY_DSL_PLAN.md`
-- 10-minute pamphlet: `system/doc/HARDWARE_DSL_PAMPHLET_10_MIN.md`
+**VM** (`mb_vm.c`, 700 lines): register-based interpreter, 19 opcodes,
+7 BIFs.  Registers are 32-bit tagged terms (4-bit tags, AtomVM-inspired).
 
-## Roadmap (M0–M6)
+**Scheduler** (`mb_scheduler.c`): cooperative round-robin, 8 process
+slots, 64-reduction time slices.  Processes block on empty mailbox
+(RECV_CMD) and yield on sleep (SLEEP_MS).
 
-- `M0` VM boot + static program execution (done)
-- `M1` GPIO/PWM/I2C orchestration on hardware (done baseline)
-- `M2` sensor event loop + mailbox policy expansion (in progress)
-- `M3` memory model hardening + long-run stability tests
-- `M4` resilience features: watchdog, fault recovery, soak runs (done)
-- `M5` performance characterization + contract freeze (in progress)
-- `M6` actuator control path (PWM mailbox first pass) (in progress)
+**Heap + GC** (`mb_heap.c`): per-process semi-space bump allocator.
+Cheney's copying GC, no recursion.  128 words per space (512 bytes).
 
-M5 starter tooling:
-- `erts/example/mini_beam_esp32/zephyr_app/analyze_event_perf.sh`
-- `erts/example/mini_beam_esp32/zephyr_app/check_perf_regression.sh`
-- `erts/example/mini_beam_esp32/zephyr_app/run_soak_profile.sh`
-- `erts/example/mini_beam_esp32/zephyr_app/perf_gate_rc.sh`
-- `erts/example/mini_beam_esp32/zephyr_app/promote_soak_baseline.sh`
-- `system/doc/M5_PERF_BASELINE.md`
+**Flow compiler** (`flow_compile.escript`): reads Erlang term, validates
+sensor/actuator/flow/policy, emits C header with bytecode arrays.
 
-CI perf gate:
-- `.github/workflows/perf-gate.yml`
+**HAL** (`mb_hal_nrf52.c`): Zephyr devicetree bindings for GPIO, PWM,
+I2C, monotonic time.
 
-## Repository Split Note
+## Performance
 
-This is a standalone OS/II project repository.  
-The original upstream OTP clone was moved to:
-- `../otp_github`
+Measured on Arduino Nano 33 BLE Sense (nRF52840 @ 64MHz):
+
+| Metric | Baseline (200ms poll) | Stress (4 senders, no sleep) |
+|--------|----------------------|------------------------------|
+| Event rate | 5.0/s | 995/s (I2C saturated) |
+| Period stdev | 0.8ms | n/a (tight loop) |
+| Scheduler ticks/s | 1,223 | 4,023 |
+| Mailbox peak depth | 0/32 | 0/32 |
+| Errors | 0 | 0 |
+| CPU utilization | <1% | 100% (I2C-bound) |
+| Scheduler headroom | 99% | 97% |
+
+RAM: 42KB / 256KB (16%).  Flash: 62KB / 928KB (7%).
+
+Full report: `system/doc/M5_STRESS_TEST_REPORT.md`
+
+## Roadmap
+
+| Milestone | Status |
+|-----------|--------|
+| M0 Boot + execute | done |
+| M1 Peripheral BIFs (GPIO, PWM, I2C) | done |
+| M2 Process model + cooperative scheduler | done |
+| M3 Tagged terms + bounded heaps + GC | done |
+| M4 Watchdog + fault recovery | done |
+| M5 Performance characterization | done |
+| P0 Capability schema (boot-time) | done |
+| P1 Profile + binding validation | done |
+| P2 Flow compiler (.flow -> bytecode) | done |
+| P3 Declarative policy engine | planned |
+| P4 Multi-board portability proof | planned |
+
+## Key Paths
+
+```
+erts/example/mini_beam_esp32/
+  include/          VM headers (mb_vm.h, mb_process.h, mb_term.h, mb_heap.h, ...)
+  src/              VM implementation + host test programs
+  flows/            .flow files (Erlang terms)
+  tools/            flow_compile.escript
+  zephyr_app/       Zephyr firmware (main.c, prj.conf, overlays)
+
+system/doc/
+  mini_beam_esp32_contract_v1.md   opcode/BIF/ABI contract
+  mini_beam_design_decisions.md    locked decisions + decision log
+  M5_PERF_BASELINE_FLOW.md        performance baseline
+  M5_STRESS_TEST_REPORT.md        stress test results
+  OS2_CAPABILITY_DSL_PLAN.md       DSL track roadmap
+```
+
+## Non-Goals
+
+- No distributed Erlang
+- No hot code loading
+- No dynamic NIF/driver loading
+- No JIT
 
 ## License
 
-This repository is licensed under Apache-2.0:
-- `LICENSE`
+Apache-2.0
