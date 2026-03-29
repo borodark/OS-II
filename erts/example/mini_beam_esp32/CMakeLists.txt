@@ -64,3 +64,12 @@ add_executable(mini_beam_host_stability
 
 target_include_directories(mini_beam_host_stability PRIVATE include)
 target_compile_options(mini_beam_host_stability PRIVATE -Wall -Wextra -Werror)
+
+add_executable(mini_beam_host_flow
+  src/main_flow_host.c
+  ${MB_CORE_SRCS}
+  src/mb_hal_stub.c
+)
+
+target_include_directories(mini_beam_host_flow PRIVATE include /tmp)
+target_compile_options(mini_beam_host_flow PRIVATE -Wall -Wextra -Werror)
