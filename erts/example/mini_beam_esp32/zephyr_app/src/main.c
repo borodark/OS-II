@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/version.h>
@@ -469,6 +470,64 @@ static void os2_try_enable_i2c_pullups(void) {
 #endif
 }
 
+/* --- I2C bus recovery and timeout-guarded probe --- */
+
+#define OS2_I2C_PROBE_TIMEOUT_MS 500
+#define OS2_I2C_PROBE_STACK_SIZE 1024
+
+static struct {
+    const struct device *dev;
+    uint8_t addr;
+    uint8_t reg;
+    uint8_t value;
+    int rc;
+    struct k_sem done;
+} os2_probe_ctx;
+
+static K_THREAD_STACK_DEFINE(os2_probe_stack, OS2_I2C_PROBE_STACK_SIZE);
+static struct k_thread os2_probe_thread;
+
+static void os2_probe_thread_fn(void *p1, void *p2, void *p3) {
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
+    os2_probe_ctx.rc = i2c_write_read(os2_probe_ctx.dev,
+                                       os2_probe_ctx.addr,
+                                       &os2_probe_ctx.reg, 1U,
+                                       &os2_probe_ctx.value, 1U);
+    k_sem_give(&os2_probe_ctx.done);
+}
+
+/**
+ * @brief Probe an I2C device with a timeout.
+ * @return 0 on success, negative on I2C error, 1 on timeout.
+ */
+static int os2_i2c_probe_timeout(const struct device *dev, uint8_t addr,
+                                  uint8_t reg, uint8_t *value) {
+    k_sem_init(&os2_probe_ctx.done, 0, 1);
+    os2_probe_ctx.dev = dev;
+    os2_probe_ctx.addr = addr;
+    os2_probe_ctx.reg = reg;
+    os2_probe_ctx.value = 0;
+    os2_probe_ctx.rc = -ETIMEDOUT;
+
+    k_thread_create(&os2_probe_thread, os2_probe_stack,
+                    OS2_I2C_PROBE_STACK_SIZE,
+                    os2_probe_thread_fn, NULL, NULL, NULL,
+                    K_PRIO_COOP(7), 0, K_NO_WAIT);
+
+    if (k_sem_take(&os2_probe_ctx.done, K_MSEC(OS2_I2C_PROBE_TIMEOUT_MS)) != 0) {
+        /* Timeout — probe thread is stuck in i2c_write_read.
+         * Abort the thread so it doesn't linger. */
+        k_thread_abort(&os2_probe_thread);
+        LOG_WRN("i2c probe addr=0x%02x timed out after %dms", addr, OS2_I2C_PROBE_TIMEOUT_MS);
+        return 1;
+    }
+
+    *value = os2_probe_ctx.value;
+    return os2_probe_ctx.rc;
+}
+
 static const struct device *os2_get_i2c_dev(uint8_t bus) {
     if (bus == 0U) {
 #if OS2_HAS_I2C0
@@ -507,12 +566,10 @@ static size_t os2_i2c_signature_scan(os2_sensor_target_t *targets, size_t max_ta
             continue;
         }
         LOG_INF("i2c bus%u probing %s addr=0x%02x ...", sig->bus, sig->name, sig->addr);
-        /* Skip APDS9960 (0x39) — sensor holds bus on this board */
-        if (sig->addr == 0x39) {
-            LOG_WRN("i2c bus%u skip addr=0x%02x (known hang)", sig->bus, sig->addr);
-            continue;
+        rc = os2_i2c_probe_timeout(dev, sig->addr, sig->reg, &value);
+        if (rc == 1) {
+            continue; /* timed out — skip this sensor */
         }
-        rc = i2c_write_read(dev, sig->addr, &sig->reg, 1U, &value, 1U);
         if (rc == 0) {
             LOG_INF("i2c bus%u probe %s addr=0x%02x reg=0x%02x val=0x%02x",
                 sig->bus, sig->name, sig->addr, sig->reg, value);
@@ -718,15 +775,7 @@ int main(void) {
 
     os2_try_enable_i2c_pullups();
     k_msleep(50);
-    target_count = 0;
-    targets[0].name = "fallback";
-    targets[0].id = 1;
-    targets[0].bus = 0;
-    targets[0].addr = 0x68;
-    targets[0].reg = 0x75;
-    target_count = 1;
-    runtimes[0].id = 1;
-    LOG_WRN("i2c scan skipped, using fallback bus0:0x68");
+    target_count = os2_i2c_signature_scan(targets, ARRAY_SIZE(targets));
 
     program_size = os2_build_cyclic_program();
     mb_sched_init(&sched);
