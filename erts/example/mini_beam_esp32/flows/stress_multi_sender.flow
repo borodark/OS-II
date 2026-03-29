@@ -1,0 +1,18 @@
+#{sensors => [
+    #{bus => 1, addr => 16#39, reg => 16#92, poll_ms => 0},
+    #{bus => 1, addr => 16#5F, reg => 16#0F, poll_ms => 0},
+    #{bus => 1, addr => 16#39, reg => 16#92, poll_ms => 0},
+    #{bus => 1, addr => 16#5F, reg => 16#0F, poll_ms => 0}
+  ],
+  actuators => [
+    #{kind => pwm, channel => 0}
+  ],
+  flows => [
+    #{from => 16#39, to => {pwm, 0}}
+  ],
+  policy => #{
+    mailbox_depth => 32,
+    watchdog_ms => 6000,
+    on_fail => stop_actuator
+  }
+}.

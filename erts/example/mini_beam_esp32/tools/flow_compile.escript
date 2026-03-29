@@ -1,0 +1,176 @@
+#!/usr/bin/env escript
+%% OS/II Flow Compiler (P2)
+%%
+%% Reads a .flow file (Erlang term) and emits a C header with bytecode
+%% arrays for sensor processes and an actuator process.
+%%
+%% Usage: flow_compile.escript <input.flow> <output.h>
+
+-mode(compile).
+
+-define(OP_CONST_I32,  16#01).
+-define(OP_CALL_BIF,   16#10).
+-define(OP_RECV_CMD,   16#20).
+-define(OP_SEND,       16#21).
+-define(OP_YIELD,      16#23).
+-define(OP_SLEEP_MS,   16#40).
+-define(OP_JMP,        16#30).
+
+-define(BIF_PWM_SET_DUTY, 2).
+-define(BIF_I2C_READ_REG, 3).
+-define(BIF_MONOTONIC_MS, 4).
+
+-define(CMD_PWM_SET_DUTY, 2).
+
+main([InFile, OutFile]) ->
+    case file:consult(InFile) of
+        {ok, [Flow]} ->
+            validate(Flow),
+            {SensorProgs, ActuatorProg} = compile_flow(Flow),
+            Header = emit_header(Flow, SensorProgs, ActuatorProg),
+            ok = file:write_file(OutFile, Header),
+            io:format("flow_compile: ~s -> ~s~n", [InFile, OutFile]),
+            lists:foreach(fun({I, P}) ->
+                io:format("  sensor ~p: ~p bytes~n", [I, length(P)])
+            end, lists:zip(lists:seq(1, length(SensorProgs)), SensorProgs)),
+            io:format("  actuator:  ~p bytes~n", [length(ActuatorProg)]),
+            io:format("  processes: ~p~n", [length(SensorProgs) + 1]);
+        {error, Reason} ->
+            io:format(standard_error, "error: ~s: ~p~n", [InFile, Reason]),
+            halt(1)
+    end;
+main(_) ->
+    io:format(standard_error, "usage: flow_compile.escript <input.flow> <output.h>~n", []),
+    halt(1).
+
+%% --- validation ---
+
+validate(#{sensors := Ss, actuators := As, flows := Fs, policy := P}) ->
+    lists:foreach(fun validate_sensor/1, Ss),
+    lists:foreach(fun validate_actuator/1, As),
+    lists:foreach(fun(F) -> validate_flow(F, Ss, As) end, Fs),
+    validate_policy(P);
+validate(_) ->
+    fail("flow must be a map with keys: sensors, actuators, flows, policy").
+
+validate_sensor(#{bus := B, addr := A, reg := R, poll_ms := P})
+  when is_integer(B), B >= 0, B =< 3,
+       is_integer(A), A >= 0, A =< 127,
+       is_integer(R), R >= 0, R =< 255,
+       is_integer(P), P >= 0 -> ok;
+validate_sensor(S) -> fail("invalid sensor: ~p", [S]).
+
+validate_actuator(#{kind := pwm, channel := C})
+  when is_integer(C), C >= 0, C =< 7 -> ok;
+validate_actuator(A) -> fail("invalid actuator: ~p", [A]).
+
+validate_flow(#{from := Addr, to := {pwm, Ch}}, Ss, As) ->
+    lists:any(fun(#{addr := A}) -> A =:= Addr end, Ss)
+        orelse fail("flow: unknown sensor addr=0x~.16B", [Addr]),
+    lists:any(fun(#{channel := C}) -> C =:= Ch end, As)
+        orelse fail("flow: unknown actuator channel=~p", [Ch]);
+validate_flow(F, _, _) -> fail("invalid flow: ~p", [F]).
+
+validate_policy(#{mailbox_depth := M, watchdog_ms := W, on_fail := F})
+  when is_integer(M), M > 0, is_integer(W), W > 0,
+       (F =:= stop_actuator orelse F =:= hold_last orelse F =:= ignore) -> ok;
+validate_policy(P) -> fail("invalid policy: ~p", [P]).
+
+fail(Fmt) -> fail(Fmt, []).
+fail(Fmt, Args) ->
+    io:format(standard_error, "error: " ++ Fmt ++ "~n", Args), halt(1).
+
+%% --- bytecode compilation ---
+
+compile_flow(#{sensors := Sensors, flows := Flows}) ->
+    [#{to := {pwm, PwmCh}} | _] = Flows,
+    %% Actuator is always the LAST pid (sensor count + 1)
+    ActPid = length(Sensors) + 1,
+    SensorProgs = [begin
+        #{bus := B, addr := A, reg := R, poll_ms := P} = S,
+        compile_sensor(B, A, R, P, PwmCh, ActPid)
+    end || S <- Sensors],
+    {SensorProgs, compile_actuator()}.
+
+compile_sensor(Bus, Addr, Reg, PollMs, PwmCh, ActPid) ->
+    Init = lists:flatten([
+        const_i32(0, Bus),
+        const_i32(1, Addr),
+        const_i32(2, Reg),
+        const_i32(3, ActPid),
+        const_i32(4, ?CMD_PWM_SET_DUTY),
+        const_i32(5, PwmCh),
+        const_i32(6, PollMs),
+        const_i32(8, 0)
+    ]),
+    LoopPC = length(Init),
+    Body = lists:flatten([
+        [?OP_CALL_BIF, ?BIF_I2C_READ_REG, 3, 0, 1, 2, 7],
+        [?OP_CALL_BIF, ?BIF_MONOTONIC_MS, 0, 9],
+        [?OP_SEND, 3, 4, 5, 7, 8, 8],
+        %% poll_ms=0 -> YIELD (tight loop), else SLEEP_MS
+        case PollMs of
+            0 -> [?OP_YIELD];
+            _ -> [?OP_SLEEP_MS, 6]
+        end
+    ]),
+    JmpOff = LoopPC - (LoopPC + length(Body) + 5),
+    Init ++ Body ++ [?OP_JMP | i32le(JmpOff)].
+
+compile_actuator() ->
+    Body = lists:flatten([
+        [?OP_RECV_CMD, 0, 1, 2, 3, 4],
+        [?OP_CALL_BIF, ?BIF_PWM_SET_DUTY, 2, 1, 2, 5]
+    ]),
+    JmpOff = 0 - (length(Body) + 5),
+    Body ++ [?OP_JMP | i32le(JmpOff)].
+
+%% --- helpers ---
+
+const_i32(R, V) -> [?OP_CONST_I32, R | i32le(V)].
+
+i32le(V) when V >= 0 ->
+    [V band 16#FF, (V bsr 8) band 16#FF, (V bsr 16) band 16#FF, (V bsr 24) band 16#FF];
+i32le(V) -> i32le((1 bsl 32) + V).
+
+%% --- C header output ---
+
+emit_header(Flow, SProgs, AProg) ->
+    #{sensors := Ss, policy := #{mailbox_depth := MD, watchdog_ms := WD, on_fail := OF}} = Flow,
+    NSensors = length(Ss),
+    OFS = atom_to_list(OF),
+    lists:flatten([
+        "/* Generated by OS/II flow compiler -- do not edit */\n",
+        "#ifndef OS2_FLOW_GENERATED_H\n#define OS2_FLOW_GENERATED_H\n\n",
+        io_lib:format("#define OS2_FLOW_SENSOR_COUNT ~B~n", [NSensors]),
+        io_lib:format("#define OS2_FLOW_PROCESS_COUNT ~B~n", [NSensors + 1]),
+        io_lib:format("#define OS2_FLOW_MAILBOX_DEPTH ~B~n", [MD]),
+        io_lib:format("#define OS2_FLOW_WATCHDOG_MS ~B~n", [WD]),
+        io_lib:format("#define OS2_FLOW_ON_FAIL \"~s\"~n~n", [OFS]),
+        [begin
+            Name = io_lib:format("os2_flow_sensor_prog_~B", [I]),
+            arr(lists:flatten(Name), P)
+        end || {I, P} <- lists:zip(lists:seq(1, NSensors), SProgs)],
+        "\n",
+        "static const uint8_t *os2_flow_sensor_progs[] = {\n",
+        string:join([io_lib:format("    os2_flow_sensor_prog_~B", [I])
+                     || I <- lists:seq(1, NSensors)], ",\n"),
+        "\n};\n",
+        io_lib:format("static const size_t os2_flow_sensor_sizes[] = {\n    ~s\n};\n",
+            [string:join([io_lib:format("sizeof(os2_flow_sensor_prog_~B)", [I])
+                          || I <- lists:seq(1, NSensors)], ", ")]),
+        "\n",
+        arr("os2_flow_actuator_prog", AProg),
+        "\n#endif\n"
+    ]).
+
+arr(Name, Bs) ->
+    [io_lib:format("static const uint8_t ~s[~B] = {\n    ", [Name, length(Bs)]),
+     fmt_bytes(Bs, 0), "\n};\n"].
+
+fmt_bytes([], _) -> [];
+fmt_bytes([B], _) -> io_lib:format("0x~2.16.0B", [B]);
+fmt_bytes([B|R], C) when C > 0, C rem 12 =:= 0 ->
+    [io_lib:format("0x~2.16.0B,\n    ", [B]) | fmt_bytes(R, C+1)];
+fmt_bytes([B|R], C) ->
+    [io_lib:format("0x~2.16.0B, ", [B]) | fmt_bytes(R, C+1)].
