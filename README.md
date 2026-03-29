@@ -1,10 +1,12 @@
 # OS/II
 
-BEAM-inspired embedded runtime for microcontrollers.
+Write an Erlang term. Compile to bytecode. Flash to a $4 chip.
+Two processes coordinate — sensor reads I2C, sends to actuator,
+actuator drives PWM. If the sensor fails, the motor keeps running.
+If the motor stalls, the sensor keeps reading. 42KB of RAM. No OS.
+No malloc. No crash.
 
-Write a sensor-to-actuator flow as an Erlang term.  The flow compiler
-generates bytecode.  The scheduler runs it on a 64MHz Cortex-M4 with
-256KB RAM, <3% CPU overhead, 995 real I2C events per second.
+*BEAM-inspired embedded runtime for microcontrollers.*
 
 ```erlang
 #{sensors => [
