@@ -16,13 +16,13 @@ seen the Pixar film, you recognize the lineage — a compact, diligent
 worker that finds purpose in a simple task, long after the systems
 around it have grown complicated or failed entirely.
 
-This one does not compact trash.  It delivers medication.  But it is
-clearly a descendant: same stubborn reliability, same indifference to
-the chaos above, same quiet return to the charging dock when the day's
-work is done.  WALL-E's great-grandchild, upgraded from solar panels
-to a LiPo cell, from optical sensors to I2C, from whatever ran inside
-that yellow chassis to a BEAM-inspired runtime on a chip smaller than
-a fingernail.
+This one does not compact trash.  It delivers medication.  But it is clearly an ancestor: same stubborn reliability, same
+indifference to the chaos above, same quiet return to the charging
+dock when the day's work is done.  WALL-E's great-great-grandfather,
+built decades before that yellow chassis — a LiPo cell instead of
+solar panels, I2C instead of optical sensors, a BEAM-inspired runtime
+on a chip smaller than a fingernail instead of whatever soul Pixar
+imagined inside.  The family resemblance is unmistakable.
 
 A Linux single-board computer (Raspberry Pi or Jetson) handles
 navigation: camera processing, path planning, SLAM.  But the Linux
