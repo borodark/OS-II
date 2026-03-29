@@ -90,3 +90,99 @@ versioned decision entry in this document.
   grace window, runtime withholds watchdog feed to force cold reboot.
 - Rationale: this gives us low-cost, deterministic resilience telemetry before
   watchdog and restart orchestration are added.
+
+### 2026-03-29: Process Model — Cooperative Round-Robin (M2)
+
+- Decision: lightweight process structure (`mb_process_t`) with per-process
+  register file, mailbox, program counter, and heap.  Maximum 8 processes.
+- Decision: cooperative scheduler with 64-reduction time slices.
+  `RECV_CMD` blocks (rewinds PC, sets WAITING) under the scheduler;
+  `SLEEP_MS` records wake time and yields.
+- Decision: three new opcodes (`SEND`, `SELF`, `YIELD`) for inter-process
+  communication.  Send is non-blocking for the sender; receiver wakes
+  immediately on message arrival.
+- Decision: `mb_vm_t` preserved as a compatibility wrapper.
+  New code should use `mb_scheduler_t` + `mb_process_t` directly.
+- Rationale: the process model follows BEAM's per-process isolation
+  (own registers, own mailbox, own heap) adapted for a fixed-slot table
+  on a 256KB MCU.  Cooperative scheduling avoids preemption overhead and
+  interrupt-safety complexity on Cortex-M4.
+
+### 2026-03-29: Tagged Terms and Cheney's GC (M3)
+
+- Decision: registers are `mb_term_t` (`uint32_t`) with 4-bit tags
+  matching AtomVM's scheme: smallint (0xF), atom (0xB), PID (0x3),
+  boxed/cons heap pointers (0x2/0x1).  28-bit signed integer payload.
+- Decision: per-process semi-space heap (128 words per space, 512 bytes
+  each).  Cheney's copying GC with no recursion — BFS scan only.
+- Decision: external mailbox ABI (`mb_command_t`) stays raw `int32_t`.
+  The tagging boundary is at `RECV_CMD` (tags incoming fields) and
+  `SEND` (untags outgoing fields).
+- Rationale: 4-bit tags give smallint, atom, PID, tuple, and cons
+  as immediates or heap pointers with no boxing overhead for the common
+  case (integers).  Cheney's GC is the simplest copying collector and
+  uses no stack recursion — critical for the 8KB Zephyr main stack.
+  Per-process collection means only one process pauses at a time,
+  exactly as in BEAM.
+
+### 2026-03-29: Flow File Format — Erlang Terms (P2)
+
+- Decision: flow definitions use Erlang term syntax (`.flow` files
+  parsed by `file:consult/1`).  The flow compiler is an escript that
+  reads the term, validates it, and emits a C header with bytecode
+  arrays.
+- Decision: the flow compiler generates separate bytecode programs for
+  each sensor process and one actuator process.  The Zephyr runtime
+  spawns them via the scheduler at boot.
+- Decision: `poll_ms => 0` emits `YIELD` instead of `SLEEP_MS`,
+  enabling tight-loop stress testing.
+- Alternatives considered:
+  - Custom key=value format (P1 profile style): rejected because it
+    requires inventing a parser and cannot express nested structures
+    (lists of sensors, tuple references for actuators).
+  - INI-style sections: rejected for the same reasons, plus ambiguity
+    in cross-references between sections.
+  - JSON: rejected because it adds a parser dependency and does not
+    align with the Erlang ecosystem that OS/II is part of.
+- Rationale: the runtime already emits Erlang terms (`os2_caps_v1`
+  boot schema).  Using the same format for flow input means one
+  serialization through the entire stack.  Erlang's `file:consult`
+  provides free parsing and validation.  The format is natural for
+  another Claude or any Erlang developer to produce from a verbal
+  specification.
+
+### 2026-03-29: I2C Probe Timeout via Dedicated Thread
+
+- Decision: I2C signature probes run in a dedicated Zephyr thread
+  with a 500ms semaphore timeout.  If the probe thread does not
+  complete, it is aborted and the address is skipped.
+- Root cause: the nRF52 TWIM driver blocks indefinitely when a sensor
+  holds SDA low (observed with APDS9960 after unclean shutdown).
+  The Zephyr I2C API has no per-call timeout parameter.
+- Alternatives considered:
+  - `i2c_recover_bus()`: tested, did not release the stuck bus.
+  - VDD_ENV power cycle: tested, sensor retained state across cycle.
+  - Skip known-bad addresses: works but is board-specific and fragile.
+- Rationale: a thread with a semaphore timeout is the only reliable
+  way to bound the probe duration without modifying the Zephyr I2C
+  driver.  The 1KB stack cost is acceptable (0.4% of RAM).
+
+### 2026-03-29: Stress Test Boundary — I2C Bus, Not Scheduler (M5)
+
+- Decision: accept the I2C bus at 400kHz as the throughput ceiling
+  for sensor workloads.  Do not pursue pure-compute benchmarks that
+  remove I2C from the loop.
+- Measurement: 4 sensor processes in tight loops (YIELD, no sleep)
+  SENDing to 1 actuator process:
+  - 995 I2C events/s (bus-saturated)
+  - 4,023 scheduler ticks/s
+  - 0/32 mailbox peak depth (actuator always keeps up)
+  - 0 errors over 25+ seconds
+  - CPU at 100% utilization, zero idle ticks
+- Scheduler idle capacity: 120,000 ticks/s (measured in baseline test
+  with processes sleeping).  Under full I2C load, only 3% of scheduler
+  capacity is consumed.
+- Rationale: every real workload on this board involves peripheral I/O.
+  The runtime's job is to be invisible behind the I/O — and at <3% CPU
+  overhead under full load, it is.  A synthetic benchmark without I/O
+  measures something no one will deploy.

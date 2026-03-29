@@ -777,17 +777,19 @@ int main(void) {
     k_msleep(50);
     target_count = os2_i2c_signature_scan(targets, ARRAY_SIZE(targets));
 
-    /* Two-process flow from compiled .flow file */
+    /* Spawn flow-compiled processes */
     mb_sched_init(&sched);
-    pid_sensor = mb_sched_spawn(&sched, os2_flow_sensor_prog,
-                                 sizeof(os2_flow_sensor_prog));
+    for (i = 0; i < OS2_FLOW_SENSOR_COUNT; i++) {
+        mb_pid_t p = mb_sched_spawn(&sched, os2_flow_sensor_progs[i],
+                                     os2_flow_sensor_sizes[i]);
+        LOG_INF("flow: sensor pid=%u (%u bytes)", p, (unsigned)os2_flow_sensor_sizes[i]);
+        if (i == 0) { pid_sensor = p; proc_s = mb_sched_proc(&sched, p); }
+    }
     pid_actuator = mb_sched_spawn(&sched, os2_flow_actuator_prog,
                                    sizeof(os2_flow_actuator_prog));
-    proc_s = mb_sched_proc(&sched, pid_sensor);
     proc_a = mb_sched_proc(&sched, pid_actuator);
-    LOG_INF("flow: sensor pid=%u (%u bytes) actuator pid=%u (%u bytes)",
-            pid_sensor, (unsigned)sizeof(os2_flow_sensor_prog),
-            pid_actuator, (unsigned)sizeof(os2_flow_actuator_prog));
+    LOG_INF("flow: actuator pid=%u, %u total processes",
+            pid_actuator, OS2_FLOW_PROCESS_COUNT);
 
     /*
      * Main loop: the flow-compiled programs are self-driving.
@@ -795,57 +797,77 @@ int main(void) {
      * Actuator process blocks on RECV_CMD and calls PWM BIF.
      * Native code ticks the scheduler and emits telemetry.
      */
-    while (1) {
-        uint32_t now_ms;
-        int32_t sensor_val, sensor_ts;
+    {
+        uint32_t tick_count = 0;
+        uint32_t event_count = 0;
+        uint32_t idle_count = 0;
+        uint32_t error_count = 0;
+        uint32_t max_a_depth = 0;
+        uint32_t max_s_depth = 0;
 
-        rc = mb_sched_tick(&sched);
-        if (rc != MB_OK && rc != MB_SCHED_IDLE) {
-            LOG_ERR("sched failed rc=%d sensor(state=%d err=%d pc=%u) actuator(state=%d err=%d pc=%u)",
-                    rc,
-                    proc_s->state, proc_s->last_error, (unsigned)proc_s->pc,
-                    proc_a->state, proc_a->last_error, (unsigned)proc_a->pc);
-            return rc;
-        }
+        while (1) {
+            rc = mb_sched_tick(&sched);
+            tick_count++;
 
-        /* Read sensor process registers for telemetry.
-         * Flow register plan: r7=i2c_value, r9=timestamp */
-        sensor_val = MB_GET_SMALLINT(proc_s->regs[7]);
-        sensor_ts = MB_GET_SMALLINT(proc_s->regs[9]);
+            if (rc == MB_SCHED_IDLE) {
+                idle_count++;
+                /* No sleep — pure spin to find true ceiling */
+            } else if (rc != MB_OK) {
+                error_count++;
+                if (error_count == 1) {
+                    LOG_ERR("first error rc=%d at tick %u", rc, tick_count);
+                }
+            }
 
-        if (sensor_ts != 0 && (uint32_t)sensor_ts != last_ts) {
-            int32_t status = (sensor_val < 0) ? OS2_EVENT_STATUS_IO_ERROR : OS2_EVENT_STATUS_OK;
-            LOG_INF("event sensor=%d:%d value=%d ts=%u status=%d | actuator r0=%d r2=%d",
-                    MB_GET_SMALLINT(proc_s->regs[1]),  /* addr */
-                    MB_GET_SMALLINT(proc_s->regs[2]),  /* reg */
-                    sensor_val,
-                    (uint32_t)sensor_ts,
-                    status,
-                    MB_GET_SMALLINT(proc_a->regs[0]),  /* last cmd type */
-                    MB_GET_SMALLINT(proc_a->regs[2])); /* last duty value */
-            last_ts = (uint32_t)sensor_ts;
-            mb_stats.processed++;
-        }
+            /* Track new events without logging each one */
+            {
+                int32_t ts = MB_GET_SMALLINT(proc_s->regs[9]);
+                if (ts != 0 && (uint32_t)ts != last_ts) {
+                    event_count++;
+                    last_ts = (uint32_t)ts;
+                }
+            }
 
-        now_ms = k_uptime_get_32();
-        if ((now_ms - last_stats_ts) >= OS2_STATS_LOG_PERIOD_MS) {
-            LOG_INF("flow_stats ticks=%u sensor(state=%d gc=%u) actuator(state=%d gc=%u) s_mbox=%u/%u a_mbox=%u/%u",
-                    mb_stats.processed,
-                    proc_s->state, proc_s->heap.gc_count,
-                    proc_a->state, proc_a->heap.gc_count,
-                    (unsigned)proc_s->mailbox.count, (unsigned)MB_MAILBOX_CAPACITY,
-                    (unsigned)proc_a->mailbox.count, (unsigned)MB_MAILBOX_CAPACITY);
-            last_stats_ts = now_ms;
-        }
+            /* Track peak mailbox depth */
+            if (proc_a->mailbox.count > max_a_depth) {
+                max_a_depth = (uint32_t)proc_a->mailbox.count;
+            }
+            if (proc_s->mailbox.count > max_s_depth) {
+                max_s_depth = (uint32_t)proc_s->mailbox.count;
+            }
+
+            /* Summary every 5 seconds — single LOG line */
+            {
+                uint32_t now_ms = k_uptime_get_32();
+                if ((now_ms - last_stats_ts) >= 5000U) {
+                    uint32_t elapsed = now_ms - last_stats_ts;
+                    LOG_INF("STRESS ticks=%u events=%u idle=%u errors=%u "
+                            "ticks/s=%u events/s=%u "
+                            "a_depth_max=%u/%u s_depth_max=%u/%u "
+                            "a_depth_now=%u s_depth_now=%u",
+                            tick_count, event_count, idle_count, error_count,
+                            (tick_count * 1000) / elapsed,
+                            (event_count * 1000) / elapsed,
+                            max_a_depth, (unsigned)MB_MAILBOX_CAPACITY,
+                            max_s_depth, (unsigned)MB_MAILBOX_CAPACITY,
+                            (unsigned)proc_a->mailbox.count,
+                            (unsigned)proc_s->mailbox.count);
+                    last_stats_ts = now_ms;
+                    tick_count = 0;
+                    event_count = 0;
+                    idle_count = 0;
+                    error_count = 0;
+                    max_a_depth = 0;
+                    max_s_depth = 0;
+                }
+            }
 
 #if OS2_ENABLE_TASK_WDT
-        if (task_wdt_feed(wdt_channel) < 0) {
-            LOG_ERR("task_wdt feed failed");
-            return -1;
-        }
+            if (task_wdt_feed(wdt_channel) < 0) {
+                LOG_ERR("task_wdt feed failed");
+                return -1;
+            }
 #endif
-        if (rc == MB_SCHED_IDLE) {
-            k_msleep(10);
         }
     }
 
