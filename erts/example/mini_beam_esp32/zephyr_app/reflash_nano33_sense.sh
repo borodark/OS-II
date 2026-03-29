@@ -5,18 +5,53 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${APP_DIR:-$SCRIPT_DIR}"
 BUILD_DIR="${BUILD_DIR:-/tmp/os2-nano33-sense-build}"
 BOARD="${BOARD:-arduino_nano_33_ble/nrf52840/sense}"
-PORT="${PORT:-/dev/ttyACM0}"
-BOSSAC="${BOSSAC:-$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bossac}"
+PORT="${PORT:-}"
+ARDUINO_BOSSAC_DEFAULT="$HOME/.arduino15/packages/arduino/tools/bossac/1.9.1-arduino2/bossac"
+BOSSAC="${BOSSAC:-$ARDUINO_BOSSAC_DEFAULT}"
 ZEPHYR_WS="${ZEPHYR_WS:-${WEST_TOPDIR:-}}"
 SUDO_CHOWN="${SUDO_CHOWN:-0}"
 WAIT_BOOT_SECS="${WAIT_BOOT_SECS:-3}"
 OS2_FAULT_EVERY_N="${OS2_FAULT_EVERY_N:-}"
+OS2_ENABLE_TASK_WDT="${OS2_ENABLE_TASK_WDT:-}"
 FLASH_ATTEMPTS="${FLASH_ATTEMPTS:-3}"
 
 MONITOR=0
 if [[ "${1:-}" == "--monitor" ]]; then
   MONITOR=1
 fi
+
+autodetect_port() {
+  local candidate
+  if [[ -n "${PORT:-}" && -e "$PORT" ]]; then
+    return 0
+  fi
+  if [[ -e /dev/ttyACM0 ]]; then
+    PORT="/dev/ttyACM0"
+    return 0
+  fi
+  candidate="$(ls /dev/ttyACM* 2>/dev/null | head -n1 || true)"
+  if [[ -n "$candidate" ]]; then
+    PORT="$candidate"
+    return 0
+  fi
+  PORT="/dev/ttyACM0"
+  return 1
+}
+
+autodetect_bossac() {
+  if [[ -n "${BOSSAC:-}" && -x "$BOSSAC" ]]; then
+    return 0
+  fi
+  if [[ -x "$ARDUINO_BOSSAC_DEFAULT" ]]; then
+    BOSSAC="$ARDUINO_BOSSAC_DEFAULT"
+    return 0
+  fi
+  if command -v bossac >/dev/null 2>&1; then
+    BOSSAC="$(command -v bossac)"
+    return 0
+  fi
+  return 1
+}
 
 if [[ -z "${ZEPHYR_WS}" ]]; then
   if command -v west >/dev/null 2>&1; then
@@ -25,14 +60,14 @@ if [[ -z "${ZEPHYR_WS}" ]]; then
 fi
 
 if [[ -z "${ZEPHYR_WS}" ]]; then
-  echo "error: ZEPHYR_WS is not set and no west workspace was detected." >&2
-  echo "set ZEPHYR_WS=/path/to/zephyr-workspace and retry." >&2
-  exit 1
+  if [[ -d "$HOME/zephyrproject/.west" ]]; then
+    ZEPHYR_WS="$HOME/zephyrproject"
+  fi
 fi
 
-if [[ ! -x "$BOSSAC" ]]; then
-  echo "error: bossac not found at: $BOSSAC" >&2
-  echo "set BOSSAC=/path/to/arduino-bossac and retry" >&2
+if [[ -z "${ZEPHYR_WS}" ]]; then
+  echo "error: Zephyr workspace not found." >&2
+  echo "tried: ZEPHYR_WS env, west topdir, \$HOME/zephyrproject" >&2
   exit 1
 fi
 
@@ -42,7 +77,24 @@ if [[ -f "$ZEPHYR_WS/.venv/bin/activate" ]]; then
 fi
 
 if ! command -v west >/dev/null 2>&1; then
-  echo "error: west not found in PATH. Activate your Zephyr venv first." >&2
+  if [[ -x "$ZEPHYR_WS/.venv/bin/west" ]]; then
+    export PATH="$ZEPHYR_WS/.venv/bin:$PATH"
+  fi
+fi
+
+if ! command -v west >/dev/null 2>&1; then
+  echo "error: west not found. expected at $ZEPHYR_WS/.venv/bin/west or in PATH." >&2
+  exit 1
+fi
+
+if ! autodetect_bossac; then
+  echo "error: bossac not found. install it or set BOSSAC=/path/to/bossac" >&2
+  exit 1
+fi
+
+autodetect_port || true
+if [[ -z "${PORT:-}" ]]; then
+  echo "error: no serial port detected (expected /dev/ttyACM*)." >&2
   exit 1
 fi
 
@@ -51,6 +103,7 @@ cd "$ZEPHYR_WS"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/zephyr-cache}"
 export ZEPHYR_TOOLCHAIN_VARIANT="${ZEPHYR_TOOLCHAIN_VARIANT:-gnuarmemb}"
 export GNUARMEMB_TOOLCHAIN_PATH="${GNUARMEMB_TOOLCHAIN_PATH:-/usr}"
+export CCACHE_DISABLE="${CCACHE_DISABLE:-1}"
 
 ensure_port_owner() {
   if [[ "$SUDO_CHOWN" -eq 1 && -e "$PORT" ]]; then
@@ -77,6 +130,10 @@ touch_bootloader_1200() {
   fi
 }
 
+echo "[env] ZEPHYR_WS=$ZEPHYR_WS"
+echo "[env] BOSSAC=$BOSSAC"
+echo "[env] PORT=$PORT"
+
 echo "[1/2] Building $BOARD into $BUILD_DIR"
 BUILD_ARGS=(
   -b "$BOARD"
@@ -84,9 +141,23 @@ BUILD_ARGS=(
   -d "$BUILD_DIR"
   -p always
 )
+CMAKE_DEFINES=()
+EXTRA_CPP_FLAGS=()
 if [[ -n "$OS2_FAULT_EVERY_N" ]]; then
   echo "[build] fault injection enabled: OS2_FAULT_EVERY_N=$OS2_FAULT_EVERY_N"
-  BUILD_ARGS+=(-- "-DOS2_FAULT_EVERY_N=$OS2_FAULT_EVERY_N")
+  EXTRA_CPP_FLAGS+=("-DOS2_FAULT_EVERY_N=$OS2_FAULT_EVERY_N")
+fi
+if [[ -n "$OS2_ENABLE_TASK_WDT" ]]; then
+  echo "[build] task watchdog flag: OS2_ENABLE_TASK_WDT=$OS2_ENABLE_TASK_WDT"
+  EXTRA_CPP_FLAGS+=("-DOS2_ENABLE_TASK_WDT=$OS2_ENABLE_TASK_WDT")
+fi
+if [[ "${#EXTRA_CPP_FLAGS[@]}" -gt 0 ]]; then
+  extra_cflags="${EXTRA_CPP_FLAGS[*]}"
+  echo "[build] extra cflags: $extra_cflags"
+  CMAKE_DEFINES+=("-DEXTRA_CFLAGS=$extra_cflags")
+fi
+if [[ "${#CMAKE_DEFINES[@]}" -gt 0 ]]; then
+  BUILD_ARGS+=(-- "${CMAKE_DEFINES[@]}")
 fi
 west build "${BUILD_ARGS[@]}"
 

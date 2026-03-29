@@ -33,7 +33,9 @@ int main(void) {
     }
 
     printf("mailbox recv: type=%d a=%d b=%d c=%d d=%d\n",
-           vm.regs[0], vm.regs[1], vm.regs[2], vm.regs[3], vm.regs[4]);
+           MB_GET_SMALLINT(vm.regs[0]), MB_GET_SMALLINT(vm.regs[1]),
+           MB_GET_SMALLINT(vm.regs[2]), MB_GET_SMALLINT(vm.regs[3]),
+           MB_GET_SMALLINT(vm.regs[4]));
 
     cmd.type = 999;
     cmd.a = 0;

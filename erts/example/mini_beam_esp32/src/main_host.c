@@ -53,6 +53,7 @@ int main(void) {
         return 1;
     }
 
-    printf("vm done: i2c_value_reg7=%d gpio_level_reg10=%d\n", vm.regs[7], vm.regs[10]);
+    printf("vm done: i2c_value_reg7=%d gpio_level_reg10=%d\n",
+           MB_GET_SMALLINT(vm.regs[7]), MB_GET_SMALLINT(vm.regs[10]));
     return 0;
 }

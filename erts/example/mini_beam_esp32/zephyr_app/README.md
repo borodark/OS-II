@@ -91,10 +91,59 @@ Long soak profile helper (captures + analyzes + gates):
 ./promote_soak_baseline.sh --profile 60m
 ```
 
+Parallel multi-board soaks:
+
+```bash
+./run_parallel_soaks.sh --profile 30m --sudo-chown \
+  --ports /dev/ttyACM0,/dev/ttyACM1,/dev/ttyACM2
+```
+
+Optional first deployment before parallel capture:
+
+```bash
+./run_parallel_soaks.sh --profile 10m --sudo-chown --flash-first
+```
+
 M6 first pass:
 - VM mailbox now handles both `MB_CMD_I2C_READ` and `MB_CMD_PWM_SET_DUTY` in one cyclic program.
 - Runtime emits actuator logs:
-  - `actuator_event actuator_id=... type=pwm_set_duty channel=... duty_permille=... value=...`
+  - `event kind=actuator op=pwm_set_duty actuator_id=... channel=... duty_permille=... value=...`
+
+P0 capability schema lock:
+- Boot emits one Erlang-term capability map line:
+  - `os2_caps_v1 #{caps_v=>1,...}`
+- Validate captured logs:
+
+```bash
+./validate_caps_term.sh logs/nano33.log
+```
+
+P1 profile + binding validation:
+- Profile file:
+  - `profiles/nano33_ble_sense.os2`
+- Validate profile requirements and logical bindings against boot caps term:
+
+```bash
+./validate_profile_bindings.sh \
+  --profile profiles/nano33_ble_sense.os2 \
+  --log logs/nano33.log
+```
+
+Runtime preflight guard (fail-fast):
+- `redeploy_and_log.sh` and `run_soak_profile.sh` now run a preflight by default.
+- Preflight checks:
+  1) `os2_caps_v1` exists and is valid.
+  2) profile bindings are compatible with capabilities.
+- Override only when needed:
+  - `--skip-preflight`
+
+Manual preflight command:
+
+```bash
+./preflight_profile_check.sh \
+  --profile profiles/nano33_ble_sense.os2 \
+  --port /dev/ttyACM0
+```
 
 Board debug instructions:
 - `README_DEBUG_BOARD.md`

@@ -16,6 +16,7 @@
 #endif
 
 #include "mb_vm.h"
+#include "mb_scheduler.h"
 
 /*
  * Module: OS/II Zephyr runtime (nRF52840 / Nano 33 BLE Sense path)
@@ -32,8 +33,8 @@
 
 LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 
-/* Locked event schema constants (v1). Keep in sync with contract doc. */
-#define OS2_EVENT_SCHEMA_VERSION 1
+/* Locked event schema constants (v2). Keep in sync with contract doc. */
+#define OS2_EVENT_SCHEMA_VERSION 2
 #define OS2_EVENT_STATUS_OK 0
 #define OS2_EVENT_STATUS_IO_ERROR 1
 #define OS2_EVENT_STATUS_BAD_ARGUMENT 2
@@ -68,6 +69,25 @@ LOG_MODULE_REGISTER(mini_beam_nrf52, LOG_LEVEL_INF);
 #define OS2_PWM_PERIOD_MS 1000U
 #define OS2_PWM_CHANNEL 0U
 #define OS2_PWM_ACTUATOR_ID 1U
+#ifndef OS2_ENABLE_TASK_WDT
+#define OS2_ENABLE_TASK_WDT 1
+#endif
+
+/* Locked board capability schema (v1), encoded as Erlang term text in logs. */
+#define OS2_CAPS_SCHEMA_VERSION 1U
+#define OS2_BOARD_ATOM "arduino_nano_33_ble_sense"
+#define OS2_VM_ATOM "mini_beam"
+#define OS2_SPI_MASTERS 4U
+#define OS2_PWM_CHANNELS 4U
+#define OS2_ADC_CHANNELS 8U
+#define OS2_ADC_MAX_KSPS 200U
+#define OS2_RTC_COUNT 3U
+#define OS2_TIMER32_COUNT 5U
+#define OS2_HAS_QDEC 1U
+#define OS2_HAS_I2S 1U
+#define OS2_HAS_PDM 1U
+#define OS2_HAS_BLE 1U
+#define OS2_HAS_EASYDMA 1U
 
 /* Set >0 to inject a synthetic read failure every Nth sensor read. */
 #ifndef OS2_FAULT_EVERY_N
@@ -117,6 +137,64 @@ static const struct gpio_dt_spec os2_mic_pwr_en =
 #else
 #define OS2_HAS_MIC_PWR_EN 0
 #endif
+
+#if OS2_HAS_VDD_ENV_EN && OS2_HAS_MIC_PWR_EN
+#define OS2_POWER_DOMAINS_ATOMS "[vdd_env,mic_pwr]"
+#elif OS2_HAS_VDD_ENV_EN
+#define OS2_POWER_DOMAINS_ATOMS "[vdd_env]"
+#elif OS2_HAS_MIC_PWR_EN
+#define OS2_POWER_DOMAINS_ATOMS "[mic_pwr]"
+#else
+#define OS2_POWER_DOMAINS_ATOMS "[]"
+#endif
+
+#define OS2_I2C_BUS_COUNT ((uint8_t)(OS2_HAS_I2C0 + OS2_HAS_I2C1))
+
+typedef struct {
+    uint8_t caps_v;
+    const char *board_atom;
+    const char *vm_atom;
+    uint8_t event_schema_v;
+    uint8_t i2c_buses;
+    uint8_t spi_masters;
+    uint8_t pwm_channels;
+    uint8_t adc_channels;
+    uint16_t adc_max_ksps;
+    uint8_t rtc_count;
+    uint8_t timer32_count;
+    uint8_t has_qdec;
+    uint8_t has_i2s;
+    uint8_t has_pdm;
+    uint8_t has_ble;
+    uint8_t has_easydma;
+    uint8_t mailbox_depth;
+    uint32_t wdt_timeout_ms;
+    const char *policy_atom;
+    const char *power_domains_atoms;
+} os2_caps_v1_t;
+
+static const os2_caps_v1_t os2_caps_v1 = {
+    .caps_v = OS2_CAPS_SCHEMA_VERSION,
+    .board_atom = OS2_BOARD_ATOM,
+    .vm_atom = OS2_VM_ATOM,
+    .event_schema_v = OS2_EVENT_SCHEMA_VERSION,
+    .i2c_buses = OS2_I2C_BUS_COUNT,
+    .spi_masters = OS2_SPI_MASTERS,
+    .pwm_channels = OS2_PWM_CHANNELS,
+    .adc_channels = OS2_ADC_CHANNELS,
+    .adc_max_ksps = OS2_ADC_MAX_KSPS,
+    .rtc_count = OS2_RTC_COUNT,
+    .timer32_count = OS2_TIMER32_COUNT,
+    .has_qdec = OS2_HAS_QDEC,
+    .has_i2s = OS2_HAS_I2S,
+    .has_pdm = OS2_HAS_PDM,
+    .has_ble = OS2_HAS_BLE,
+    .has_easydma = OS2_HAS_EASYDMA,
+    .mailbox_depth = MB_MAILBOX_CAPACITY,
+    .wdt_timeout_ms = OS2_WDT_TIMEOUT_MS,
+    .policy_atom = "reject_new",
+    .power_domains_atoms = OS2_POWER_DOMAINS_ATOMS,
+};
 
 typedef struct {
     const char *name;
@@ -353,7 +431,7 @@ static size_t os2_build_cyclic_program(void) {
     os2_emit_i32(&pc, (int32_t)loop_pc - (int32_t)(pc + 4U));
 
     os2_patch_rel_i32(jz_to_pwm_patch, pwm_path_pc);
-    os2_patch_rel_i32(jmp_over_pwm_patch, pc);
+    os2_patch_rel_i32(jmp_over_pwm_patch, loop_pc);
     os2_patch_rel_i32(jmp_to_loop_patch, loop_pc);
     return pc;
 }
@@ -417,6 +495,7 @@ static size_t os2_i2c_signature_scan(os2_sensor_target_t *targets, size_t max_ta
     uint8_t next_id = 1;
 
     LOG_INF("i2c signature scan start");
+
     for (i = 0; i < ARRAY_SIZE(os2_sensor_sigs); i++) {
         const os2_sensor_sig_t *sig = &os2_sensor_sigs[i];
         const struct device *dev = os2_get_i2c_dev(sig->bus);
@@ -424,6 +503,13 @@ static size_t os2_i2c_signature_scan(os2_sensor_target_t *targets, size_t max_ta
         int rc;
 
         if (dev == NULL) {
+            LOG_INF("i2c bus%u skip (not ready)", sig->bus);
+            continue;
+        }
+        LOG_INF("i2c bus%u probing %s addr=0x%02x ...", sig->bus, sig->name, sig->addr);
+        /* Skip APDS9960 (0x39) — sensor holds bus on this board */
+        if (sig->addr == 0x39) {
+            LOG_WRN("i2c bus%u skip addr=0x%02x (known hang)", sig->bus, sig->addr);
             continue;
         }
         rc = i2c_write_read(dev, sig->addr, &sig->reg, 1U, &value, 1U);
@@ -447,7 +533,8 @@ static size_t os2_i2c_signature_scan(os2_sensor_target_t *targets, size_t max_ta
     return found;
 }
 
-static int os2_enqueue_sensor_cmd(mb_vm_t *vm, const os2_sensor_target_t *target, os2_mb_stats_t *stats) {
+static int os2_enqueue_sensor_cmd(mb_scheduler_t *sched, mb_pid_t pid,
+                                  const os2_sensor_target_t *target, os2_mb_stats_t *stats) {
     mb_command_t cmd;
     int rc;
 
@@ -460,13 +547,16 @@ static int os2_enqueue_sensor_cmd(mb_vm_t *vm, const os2_sensor_target_t *target
     cmd.d = target->id;
 
 #if OS2_MB_POLICY_REJECT_NEW
-    if (vm->mailbox.count >= MB_MAILBOX_CAPACITY) {
-        stats->dropped_full++;
-        return MB_MAILBOX_FULL;
+    {
+        mb_process_t *p = mb_sched_proc(sched, pid);
+        if (p != NULL && p->mailbox.count >= MB_MAILBOX_CAPACITY) {
+            stats->dropped_full++;
+            return MB_MAILBOX_FULL;
+        }
     }
 #endif
 
-    rc = mb_vm_mailbox_push(vm, cmd);
+    rc = mb_sched_send(sched, pid, cmd);
     if (rc == MB_OK) {
         stats->pushed++;
     } else if (rc == MB_MAILBOX_FULL) {
@@ -475,7 +565,8 @@ static int os2_enqueue_sensor_cmd(mb_vm_t *vm, const os2_sensor_target_t *target
     return rc;
 }
 
-static int os2_enqueue_pwm_cmd(mb_vm_t *vm, uint8_t channel, uint16_t duty_permille,
+static int os2_enqueue_pwm_cmd(mb_scheduler_t *sched, mb_pid_t pid,
+                               uint8_t channel, uint16_t duty_permille,
                                uint8_t actuator_id, os2_mb_stats_t *stats) {
     mb_command_t cmd;
     int rc;
@@ -489,13 +580,16 @@ static int os2_enqueue_pwm_cmd(mb_vm_t *vm, uint8_t channel, uint16_t duty_permi
     cmd.d = actuator_id;
 
 #if OS2_MB_POLICY_REJECT_NEW
-    if (vm->mailbox.count >= MB_MAILBOX_CAPACITY) {
-        stats->dropped_full++;
-        return MB_MAILBOX_FULL;
+    {
+        mb_process_t *p = mb_sched_proc(sched, pid);
+        if (p != NULL && p->mailbox.count >= MB_MAILBOX_CAPACITY) {
+            stats->dropped_full++;
+            return MB_MAILBOX_FULL;
+        }
     }
 #endif
 
-    rc = mb_vm_mailbox_push(vm, cmd);
+    rc = mb_sched_send(sched, pid, cmd);
     if (rc == MB_OK) {
         stats->pushed++;
     } else if (rc == MB_MAILBOX_FULL) {
@@ -540,8 +634,34 @@ static uint8_t os2_should_withhold_wdt_feed(const os2_sensor_runtime_t *runtimes
     return 0U;
 }
 
+static void os2_log_caps_v1(void) {
+    LOG_INF("os2_caps_v1 #{caps_v=>%u,board=>%s,vm=>%s,event_schema=>%u,mailbox_depth=>%u,i2c=>%u,spi=>%u,pwm=>%u,adc=>#{channels=>%u,max_ksps=>%u},rtc=>%u,timers32=>%u,qdec=>%u,i2s=>%u,pdm=>%u,ble=>%u,easydma=>%u,policy=>%s,power_domains=>%s,wdt_ms=>%u}",
+        os2_caps_v1.caps_v,
+        os2_caps_v1.board_atom,
+        os2_caps_v1.vm_atom,
+        os2_caps_v1.event_schema_v,
+        os2_caps_v1.mailbox_depth,
+        os2_caps_v1.i2c_buses,
+        os2_caps_v1.spi_masters,
+        os2_caps_v1.pwm_channels,
+        os2_caps_v1.adc_channels,
+        os2_caps_v1.adc_max_ksps,
+        os2_caps_v1.rtc_count,
+        os2_caps_v1.timer32_count,
+        os2_caps_v1.has_qdec,
+        os2_caps_v1.has_i2s,
+        os2_caps_v1.has_pdm,
+        os2_caps_v1.has_ble,
+        os2_caps_v1.has_easydma,
+        os2_caps_v1.policy_atom,
+        os2_caps_v1.power_domains_atoms,
+        os2_caps_v1.wdt_timeout_ms);
+}
+
 int main(void) {
-    mb_vm_t vm;
+    static mb_scheduler_t sched;
+    mb_pid_t vm_pid;
+    mb_process_t *proc;
     int rc;
     os2_sensor_target_t targets[6];
     size_t target_count = 0;
@@ -579,10 +699,12 @@ int main(void) {
 
     LOG_INF("mini_beam_nrf52 start");
     LOG_INF("event schema v%d", OS2_EVENT_SCHEMA_VERSION);
+    os2_log_caps_v1();
     boot_counter = os2_boot_counter_next();
     LOG_INF("boot counter=%u resetreas=0x%08x", (unsigned)boot_counter, resetreas_raw);
     NRF_POWER->RESETREAS = resetreas_raw;
 
+#if OS2_ENABLE_TASK_WDT
     wdt_channel = os2_task_wdt_start();
     if (wdt_channel < 0) {
         LOG_ERR("task_wdt init failed rc=%d", wdt_channel);
@@ -590,37 +712,33 @@ int main(void) {
     }
     LOG_INF("task_wdt enabled timeout_ms=%u grace_ms=%u",
         OS2_WDT_TIMEOUT_MS, OS2_WDT_DEGRADED_GRACE_MS);
+#else
+    LOG_WRN("task_wdt disabled via OS2_ENABLE_TASK_WDT=0");
+#endif
 
     os2_try_enable_i2c_pullups();
-    k_msleep(5);
-    target_count = os2_i2c_signature_scan(targets, ARRAY_SIZE(targets));
-
-    if (target_count == 0) {
-        targets[0].name = "fallback";
-        targets[0].id = 1;
-        targets[0].bus = 0;
-        targets[0].addr = 0x68;
-        targets[0].reg = 0x75;
-        target_count = 1;
-        LOG_WRN("no known sensor signature found, using fallback target bus0 addr=0x68 reg=0x75");
-    } else {
-        for (i = 0; i < target_count; i++) {
-            LOG_INF("target id=%u %s bus=%u addr=0x%02x reg=0x%02x",
-                targets[i].id, targets[i].name, targets[i].bus, targets[i].addr, targets[i].reg);
-        }
-    }
-    for (i = 0; i < target_count; i++) {
-        runtimes[i].id = targets[i].id;
-    }
+    k_msleep(50);
+    target_count = 0;
+    targets[0].name = "fallback";
+    targets[0].id = 1;
+    targets[0].bus = 0;
+    targets[0].addr = 0x68;
+    targets[0].reg = 0x75;
+    target_count = 1;
+    runtimes[0].id = 1;
+    LOG_WRN("i2c scan skipped, using fallback bus0:0x68");
 
     program_size = os2_build_cyclic_program();
-    mb_vm_init(&vm, demo_program, program_size);
+    mb_sched_init(&sched);
+    vm_pid = mb_sched_spawn(&sched, demo_program, program_size);
+    proc = mb_sched_proc(&sched, vm_pid);
+    LOG_INF("sched pid=%u prog=%u bytes", vm_pid, (unsigned)program_size);
 
     while (1) {
         uint32_t now_ms = k_uptime_get_32();
         if ((now_ms - last_pwm_ts) >= OS2_PWM_PERIOD_MS) {
             uint16_t duty = pwm_pattern[pwm_step % ARRAY_SIZE(pwm_pattern)];
-            rc = os2_enqueue_pwm_cmd(&vm, OS2_PWM_CHANNEL, duty, OS2_PWM_ACTUATOR_ID, &mb_stats);
+            rc = os2_enqueue_pwm_cmd(&sched, vm_pid, OS2_PWM_CHANNEL, duty, OS2_PWM_ACTUATOR_ID, &mb_stats);
             if (rc != MB_OK) {
                 LOG_WRN("mailbox full/drop actuator_id=%u rc=%d", OS2_PWM_ACTUATOR_ID, rc);
             } else {
@@ -630,29 +748,34 @@ int main(void) {
         }
         for (i = 0; i < target_count; i++) {
             os2_sensor_runtime_t *rt = &runtimes[i];
+            int32_t event_mark;
+            uint32_t event_ts;
 
             if (now_ms < rt->backoff_until_ms) {
                 continue;
             }
 
-            rc = os2_enqueue_sensor_cmd(&vm, &targets[i], &mb_stats);
+            rc = os2_enqueue_sensor_cmd(&sched, vm_pid, &targets[i], &mb_stats);
             if (rc != MB_OK) {
                 LOG_WRN("mailbox full/drop sensor_id=%u rc=%d", targets[i].id, rc);
                 continue;
             }
 
-            rc = mb_vm_run(&vm, 64);
-            if (rc != MB_OK) {
-                LOG_ERR("vm failed rc=%d last=%d pc=%u", rc, vm.last_error, (unsigned)vm.pc);
+            rc = mb_sched_tick(&sched);
+            if (rc != MB_OK && rc != MB_SCHED_IDLE) {
+                LOG_ERR("sched failed rc=%d last=%d pc=%u", rc, proc->last_error, (unsigned)proc->pc);
                 return rc;
             }
 
-            if (vm.regs[OS2_REG_EVENT_MARK] == MB_CMD_I2C_READ &&
-                (uint32_t)vm.regs[OS2_REG_TS] != last_ts) {
+            event_mark = MB_GET_SMALLINT(proc->regs[OS2_REG_EVENT_MARK]);
+            event_ts = (uint32_t)MB_GET_SMALLINT(proc->regs[OS2_REG_TS]);
+
+            if (event_mark == MB_CMD_I2C_READ && event_ts != last_ts) {
                 const char *name = "unknown";
                 int32_t status = OS2_EVENT_STATUS_OK;
-                int32_t event_value = vm.regs[OS2_REG_VALUE];
-                uint8_t sensor_id = (uint8_t)vm.regs[OS2_REG_SENSOR_ID];
+                int32_t event_value = MB_GET_SMALLINT(proc->regs[OS2_REG_VALUE]);
+                int32_t op_rc = 0;
+                uint8_t sensor_id = (uint8_t)MB_GET_SMALLINT(proc->regs[OS2_REG_SENSOR_ID]);
                 uint8_t injected_fault = 0;
                 os2_sensor_runtime_t *event_rt = NULL;
                 size_t j;
@@ -679,6 +802,7 @@ int main(void) {
 #endif
 
                 if (event_value < 0) {
+                    op_rc = event_value;
                     status = OS2_EVENT_STATUS_IO_ERROR;
                     if (event_value == -22) {
                         status = OS2_EVENT_STATUS_BAD_ARGUMENT;
@@ -687,15 +811,15 @@ int main(void) {
                         event_rt->consecutive_errors++;
                         if (event_rt->consecutive_errors <= OS2_RETRY_LIMIT) {
                             status = OS2_EVENT_STATUS_RETRYING;
-                            event_rt->backoff_until_ms = (uint32_t)vm.regs[OS2_REG_TS] + OS2_RETRY_BACKOFF_MS;
+                            event_rt->backoff_until_ms = event_ts + OS2_RETRY_BACKOFF_MS;
                         } else {
                             status = OS2_EVENT_STATUS_DEGRADED;
                             if (!event_rt->degraded) {
-                                event_rt->degraded_since_ms = (uint32_t)vm.regs[OS2_REG_TS];
+                                event_rt->degraded_since_ms = event_ts;
                             }
                             event_rt->degraded = 1;
                             event_rt->backoff_until_ms =
-                                (uint32_t)vm.regs[OS2_REG_TS] + OS2_DEGRADED_BACKOFF_MS;
+                                event_ts + OS2_DEGRADED_BACKOFF_MS;
                         }
                     }
                 } else if (event_rt != NULL) {
@@ -708,31 +832,34 @@ int main(void) {
                     event_rt->degraded_since_ms = 0;
                 }
 
-                LOG_INF("event sensor_id=%d name=%s bus=%d addr=0x%02x reg=0x%02x value=%d ts=%u status=%d inj=%u",
+                LOG_INF("event kind=sensor op=i2c_read sensor_id=%d name=%s bus=%d addr=0x%02x reg=0x%02x value=%d rc=%d ts=%u status=%d inj=%u",
                     sensor_id,
                     name,
-                    vm.regs[OS2_REG_EVT_BUS],
-                    vm.regs[OS2_REG_EVT_ADDR],
-                    vm.regs[OS2_REG_EVT_REG],
+                    MB_GET_SMALLINT(proc->regs[OS2_REG_EVT_BUS]),
+                    MB_GET_SMALLINT(proc->regs[OS2_REG_EVT_ADDR]),
+                    MB_GET_SMALLINT(proc->regs[OS2_REG_EVT_REG]),
                     event_value,
-                    (uint32_t)vm.regs[OS2_REG_TS],
+                    op_rc,
+                    event_ts,
                     status,
                     injected_fault);
-                last_ts = (uint32_t)vm.regs[OS2_REG_TS];
-                vm.regs[OS2_REG_EVENT_MARK] = MB_CMD_NONE;
+                last_ts = event_ts;
+                proc->regs[OS2_REG_EVENT_MARK] = MB_MAKE_SMALLINT(MB_CMD_NONE);
                 mb_stats.processed++;
-            } else if (vm.regs[OS2_REG_EVENT_MARK] == MB_CMD_PWM_SET_DUTY &&
-                       (uint32_t)vm.regs[OS2_REG_TS] != last_ts) {
-                int32_t status = (vm.regs[OS2_REG_VALUE] < 0) ? OS2_EVENT_STATUS_IO_ERROR : OS2_EVENT_STATUS_OK;
-                LOG_INF("actuator_event actuator_id=%d type=pwm_set_duty channel=%d duty_permille=%d value=%d ts=%u status=%d",
-                    vm.regs[OS2_REG_SENSOR_ID],
-                    vm.regs[OS2_REG_EVT_BUS],
-                    vm.regs[OS2_REG_EVT_ADDR],
-                    vm.regs[OS2_REG_VALUE],
-                    (uint32_t)vm.regs[OS2_REG_TS],
+            } else if (event_mark == MB_CMD_PWM_SET_DUTY && event_ts != last_ts) {
+                int32_t pwm_value = MB_GET_SMALLINT(proc->regs[OS2_REG_VALUE]);
+                int32_t status = (pwm_value < 0) ? OS2_EVENT_STATUS_IO_ERROR : OS2_EVENT_STATUS_OK;
+                LOG_INF("event kind=actuator op=pwm_set_duty actuator_id=%d sensor_id=%d channel=%d duty_permille=%d value=%d rc=%d ts=%u status=%d inj=0",
+                    MB_GET_SMALLINT(proc->regs[OS2_REG_SENSOR_ID]),
+                    MB_GET_SMALLINT(proc->regs[OS2_REG_SENSOR_ID]),
+                    MB_GET_SMALLINT(proc->regs[OS2_REG_EVT_BUS]),
+                    MB_GET_SMALLINT(proc->regs[OS2_REG_EVT_ADDR]),
+                    pwm_value,
+                    pwm_value,
+                    event_ts,
                     status);
-                last_ts = (uint32_t)vm.regs[OS2_REG_TS];
-                vm.regs[OS2_REG_EVENT_MARK] = MB_CMD_NONE;
+                last_ts = event_ts;
+                proc->regs[OS2_REG_EVENT_MARK] = MB_MAKE_SMALLINT(MB_CMD_NONE);
                 mb_stats.processed++;
             }
         }
@@ -742,10 +869,11 @@ int main(void) {
                 mb_stats.pushed,
                 mb_stats.dropped_full,
                 mb_stats.processed,
-                (unsigned)vm.mailbox.count,
+                (unsigned)proc->mailbox.count,
                 (unsigned)MB_MAILBOX_CAPACITY);
             last_stats_ts = last_ts;
         }
+#if OS2_ENABLE_TASK_WDT
         if (os2_should_withhold_wdt_feed(runtimes, target_count, k_uptime_get_32())) {
             if (!wdt_feed_blocked) {
                 LOG_ERR("sensor degraded beyond grace; withholding task_wdt feed for recovery reboot");
@@ -758,6 +886,7 @@ int main(void) {
             }
             wdt_feed_blocked = 0;
         }
+#endif
         k_msleep(200);
     }
 

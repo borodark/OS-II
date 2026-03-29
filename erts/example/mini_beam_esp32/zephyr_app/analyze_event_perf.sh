@@ -54,19 +54,36 @@ record_metric() {
 }
 
 AWK_OUT="$(awk -v periods_file="$TMP_PERIODS" '
-  /event sensor_id=/ {
-    sid=""; ts=""; st=""; inj="";
+  /event / {
+    sid=""; ts=""; st=""; inj=""; kind=""; op="";
     for (i = 1; i <= NF; i++) {
       if ($i ~ /^sensor_id=/) { split($i, a, "="); sid = a[2] + 0; }
+      if ($i ~ /^actuator_id=/ && sid == "") { split($i, a, "="); sid = a[2] + 0; }
       if ($i ~ /^ts=/)        { split($i, a, "="); ts = a[2] + 0; }
       if ($i ~ /^status=/)    { split($i, a, "="); st = a[2] + 0; }
       if ($i ~ /^inj=/)       { split($i, a, "="); inj = a[2] + 0; }
+      if ($i ~ /^kind=/)      { split($i, a, "="); kind = a[2]; }
+      if ($i ~ /^op=/)        { split($i, a, "="); op = a[2]; }
     }
     if (sid == "" || ts == "" || st == "") {
       next;
     }
+    if (kind == "") {
+      kind = "sensor";
+    }
+    if (op == "") {
+      op = "unknown";
+    }
     total_events++;
-    sensor_count[sid]++;
+    kind_count[kind]++;
+    op_count[op]++;
+    if (kind == "sensor") {
+      sensor_count[sid]++;
+    } else if (kind == "actuator") {
+      actuator_count[sid]++;
+    } else {
+      entity_count[sid]++;
+    }
     status_count[st]++;
     if (inj == 1) {
       inj_count++;
@@ -77,13 +94,15 @@ AWK_OUT="$(awk -v periods_file="$TMP_PERIODS" '
     if (ts > ts_max) {
       ts_max = ts;
     }
-    if (last_ts[sid] > 0) {
-      period = (ts - last_ts[sid]);
-      sensor_period_sum[sid] += period;
-      sensor_period_n[sid]++;
-      print sid, period >> periods_file;
+    if (kind == "sensor") {
+      if (last_ts[sid] > 0) {
+        period = (ts - last_ts[sid]);
+        sensor_period_sum[sid] += period;
+        sensor_period_n[sid]++;
+        print sid, period >> periods_file;
+      }
+      last_ts[sid] = ts;
     }
-    last_ts[sid] = ts;
   }
   END {
     print "events_total=" (total_events + 0);
@@ -102,9 +121,21 @@ AWK_OUT="$(awk -v periods_file="$TMP_PERIODS" '
     for (st in status_count) {
       print "  status_" st "=" status_count[st];
     }
+    print "kind_counts:";
+    for (k in kind_count) {
+      print "  kind_" k "_events=" kind_count[k];
+    }
+    print "op_counts:";
+    for (k in op_count) {
+      print "  op_" k "_events=" op_count[k];
+    }
     print "sensor_counts:";
     for (sid in sensor_count) {
       print "  sensor_" sid "_events=" sensor_count[sid];
+    }
+    print "actuator_counts:";
+    for (sid in actuator_count) {
+      print "  actuator_" sid "_events=" actuator_count[sid];
     }
     print "sensor_period_ms_avg:";
     for (sid in sensor_period_n) {
@@ -122,7 +153,7 @@ while IFS= read -r line; do
       val="${line#*=}"
       record_metric "$key" "$val"
       ;;
-    "  status_"*|"  sensor_"*_events=*|"  sensor_"*_avg_ms=*)
+    "  status_"*|"  kind_"*_events=*|"  op_"*_events=*|"  actuator_"*_events=*|"  sensor_"*_events=*|"  sensor_"*_avg_ms=*)
       trimmed="${line#"  "}"
       key="${trimmed%%=*}"
       val="${trimmed#*=}"

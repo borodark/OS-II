@@ -23,6 +23,7 @@ Use this skill to analyze ERTS/BEAM internals and produce implementation-ready p
 3. Perform target-specific gap analysis.
 - For ESP32-class targets, read `references/esp32-porting-gap-analysis.md`.
 - For nRF52840-class targets, read `references/nrf52840-register-machine-fit.md`.
+- For current AtomVM nRF52 implementation status and test commands, read `references/atomvm-nrf52-implementation-status.md`.
 - Classify each dependency as one of: `keep`, `replace`, `stub`, `disable`.
 - Keep project decisions aligned with `system/doc/mini_beam_design_decisions.md`.
 
